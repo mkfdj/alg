@@ -2,6 +2,8 @@ numpy
 pandas
 torch
 torch-xla
+jax
+jaxlib
 yfinance
 alpaca-trade-api
 gymnasium
