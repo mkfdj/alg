@@ -106,7 +106,7 @@ class TrainingConfig:
     max_grad_norm: float = 0.5
     target_kl: float = 0.01
 
-    # DDP parameters
+    # DDP parameters (deprecated - use TPU config instead)
     num_gpus: int = 2
     local_rank: int = -1
 
@@ -141,6 +141,36 @@ class APIConfig:
 
 
 @dataclass
+class TPUConfig:
+    """TPU-specific configuration parameters."""
+
+    # TPU hardware
+    tpu_cores: int = 8  # TPU v5e-8 has 8 cores
+    tpu_chips: int = 1  # Single host by default
+    tpu_topology: str = "2x4"  # TPU v5e-8 topology
+
+    # XLA compilation
+    xla_compile: bool = True
+    xla_memory_fraction: float = 0.8
+    xla_precompile: bool = False
+
+    # SPMD configuration
+    spmd_sharding: bool = True
+    sharding_strategy: str = "2d"  # 2d, 1d, replicated
+    mesh_shape: Tuple[int, int] = (1, 8)  # (chips, cores_per_chip)
+
+    # TPU-specific optimizations
+    bf16_precision: bool = True  # TPU v5e-8 supports bfloat16
+    matmul_precision: str = "high"  # high, medium, low
+    enable_fusion: bool = True
+
+    # Performance monitoring
+    tpu_metrics_enabled: bool = True
+    xla_metrics_enabled: bool = True
+    memory_stats_enabled: bool = True
+
+
+@dataclass
 class SystemConfig:
     """System configuration parameters."""
 
@@ -160,7 +190,7 @@ class SystemConfig:
     persistent_workers: bool = True
 
     # Hardware
-    device: str = "auto"  # auto, cpu, cuda
+    device: str = "auto"  # auto, cpu, cuda, tpu
     seed: int = 42
 
     # Caching
@@ -197,6 +227,7 @@ class ConfigManager:
         self.training = TrainingConfig()
         self.api = APIConfig()
         self.system = SystemConfig()
+        self.tpu = TPUConfig()
 
         # Set default tickers and timeframes if not provided
         if self.data.tickers is None:
@@ -265,6 +296,16 @@ class ConfigManager:
         if log_level := os.getenv("NCA_LOG_LEVEL"):
             self.system.log_level = log_level.upper()
 
+        # TPU settings
+        if tpu_cores := os.getenv("NCA_TPU_CORES"):
+            self.tpu.tpu_cores = int(tpu_cores)
+        if tpu_chips := os.getenv("NCA_TPU_CHIPS"):
+            self.tpu.tpu_chips = int(tpu_chips)
+        if xla_memory := os.getenv("NCA_XLA_MEMORY_FRACTION"):
+            self.tpu.xla_memory_fraction = float(xla_memory)
+        if sharding_strategy := os.getenv("NCA_SHARDING_STRATEGY"):
+            self.tpu.sharding_strategy = sharding_strategy
+
         # Trading parameters
         if max_pos := os.getenv("NCA_MAX_POSITION"):
             self.trading.max_position_size = float(max_pos)
@@ -299,6 +340,12 @@ class ConfigManager:
         assert self.nca.state_dim > 0, "state_dim must be positive"
         assert self.nca.num_layers > 0, "num_layers must be positive"
 
+        # Validate TPU parameters
+        assert self.tpu.tpu_cores > 0, "tpu_cores must be positive"
+        assert self.tpu.tpu_chips > 0, "tpu_chips must be positive"
+        assert 0 < self.tpu.xla_memory_fraction <= 1, "xla_memory_fraction must be between 0 and 1"
+        assert self.tpu.sharding_strategy in ["2d", "1d", "replicated"], "Invalid sharding strategy"
+
     def save_config(self, path: Optional[str] = None) -> None:
         """Save current configuration to file.
 
@@ -312,7 +359,7 @@ class ConfigManager:
 
             config_dict = {}
             for attr_name in dir(self):
-                if not attr_name.startswith('_') and isinstance(getattr(self, attr_name), (NCAConfig, DataConfig, TradingConfig, TrainingConfig, APIConfig, SystemConfig)):
+                if not attr_name.startswith('_') and isinstance(getattr(self, attr_name), (NCAConfig, DataConfig, TradingConfig, TrainingConfig, APIConfig, SystemConfig, TPUConfig)):
                     config_dict[attr_name] = {}
                     for field in dir(getattr(self, attr_name)):
                         if not field.startswith('_') and not callable(getattr(getattr(self, attr_name), field)):
@@ -358,6 +405,13 @@ class ConfigManager:
                 "device": self.system.device,
                 "log_level": self.system.log_level,
                 "num_workers": self.system.num_workers
+            },
+            "tpu": {
+                "tpu_cores": self.tpu.tpu_cores,
+                "tpu_chips": self.tpu.tpu_chips,
+                "xla_compile": self.tpu.xla_compile,
+                "sharding_strategy": self.tpu.sharding_strategy,
+                "bf16_precision": self.tpu.bf16_precision
             }
         }
 
@@ -373,6 +427,32 @@ def get_config() -> ConfigManager:
         Global configuration manager instance
     """
     return config
+
+
+def detect_tpu_availability() -> bool:
+    """Detect if TPU is available.
+
+    Returns:
+        True if TPU is available, False otherwise
+    """
+    try:
+        import torch_xla.core.xla_model as xm
+        return xm.is_master_ordinal()
+    except ImportError:
+        return False
+
+
+def get_tpu_device_count() -> int:
+    """Get the number of available TPU devices.
+
+    Returns:
+        Number of TPU devices available
+    """
+    try:
+        import torch_xla.core.xla_model as xm
+        return xm.xrt_world_size()
+    except ImportError:
+        return 0
 
 
 def reload_config() -> ConfigManager:

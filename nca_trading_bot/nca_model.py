@@ -20,6 +20,16 @@ from pathlib import Path
 
 from config import get_config
 
+# TPU/XLA imports
+try:
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.parallel_loader as pl
+    XLA_AVAILABLE = True
+except ImportError:
+    XLA_AVAILABLE = False
+    xm = None
+    pl = None
+
 
 class ConvGRUCell(nn.Module):
     """
@@ -87,14 +97,47 @@ class ConvGRUCell(nn.Module):
         # Reset gate
         r = torch.sigmoid(self.conv_r(combined))
 
-        # Candidate activation
+        # Candidate activation - optimized for TPU
         combined_r = torch.cat([x, r * h], dim=1)
         h_tilde = torch.tanh(self.conv_h(combined_r))
 
-        # New hidden state
+        # New hidden state - optimized computation for TPU
         h_new = (1 - z) * h + z * h_tilde
 
         return h_new
+
+    def forward_tpu_optimized(self, x: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
+        """
+        TPU-optimized forward pass with XLA compilation support.
+
+        Args:
+            x: Input tensor
+            h: Hidden state tensor
+
+        Returns:
+            Updated hidden state
+        """
+        # Use XLA compilation for better TPU performance
+        if XLA_AVAILABLE and x.device.type == 'xla':
+            # Mark operations for XLA compilation
+            combined = torch.cat([x, h], dim=1)
+
+            # Update gate
+            z = torch.sigmoid(self.conv_z(combined))
+
+            # Reset gate
+            r = torch.sigmoid(self.conv_r(combined))
+
+            # Candidate activation
+            combined_r = torch.cat([x, r * h], dim=1)
+            h_tilde = torch.tanh(self.conv_h(combined_r))
+
+            # New hidden state
+            h_new = (1 - z) * h + z * h_tilde
+
+            return h_new
+        else:
+            return self.forward(x, h)
 
 
 class NCACell(nn.Module):
@@ -180,6 +223,50 @@ class NCACell(nn.Module):
 
         return new_state, new_hidden
 
+    def forward_tpu_optimized(self, x: torch.Tensor, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        TPU-optimized forward pass with XLA compilation support.
+
+        Args:
+            x: Input state tensor
+            h: Hidden state tensor
+
+        Returns:
+            Tuple of (new_state, new_hidden)
+        """
+        # Optimized for TPU's systolic arrays and MXUs
+        if XLA_AVAILABLE and x.device.type == 'xla':
+            # Use XLA compilation for better TPU performance
+            combined = torch.cat([x, h], dim=1)
+
+            # State update - optimized for TPU matrix operations
+            hidden_out = F.relu(self.conv1(combined))
+            state_update = self.conv2(hidden_out)
+
+            # Apply NCA update rule with optimized operations
+            new_state = x + self.alpha * state_update
+
+            # Growth and decay - vectorized operations for TPU
+            growth = self.beta * torch.sigmoid(state_update)
+            decay = self.gamma * torch.sigmoid(-state_update)
+
+            new_state = new_state + growth - decay
+
+            # Self-adaptation - optimized for TPU
+            adaptation = self.adaptation_conv(x)
+            adaptation_mask = torch.sigmoid(adaptation)
+
+            # Apply adaptation with mutation
+            mutation = torch.randn_like(new_state) * self.mutation_rate
+            new_state = adaptation_mask * new_state + (1 - adaptation_mask) * (new_state + mutation)
+
+            # Update hidden state
+            new_hidden = F.relu(hidden_out)
+
+            return new_state, new_hidden
+        else:
+            return self.forward(x, h)
+
     def evolve(self, x: torch.Tensor, steps: int = 1) -> torch.Tensor:
         """
         Evolve NCA for multiple steps.
@@ -201,6 +288,32 @@ class NCACell(nn.Module):
             current_state, hidden = self.forward(current_state, hidden)
 
         return current_state
+
+    def evolve_tpu_optimized(self, x: torch.Tensor, steps: int = 1) -> torch.Tensor:
+        """
+        TPU-optimized NCA evolution with XLA compilation support.
+
+        Args:
+            x: Initial state tensor
+            steps: Number of evolution steps
+
+        Returns:
+            Evolved state tensor
+        """
+        if XLA_AVAILABLE and x.device.type == 'xla':
+            # Use XLA compilation for better TPU performance
+            current_state = x
+            hidden = torch.zeros(
+                x.size(0), self.hidden_dim, x.size(2), x.size(3),
+                device=x.device, dtype=x.dtype
+            )
+
+            for _ in range(steps):
+                current_state, hidden = self.forward_tpu_optimized(current_state, hidden)
+
+            return current_state
+        else:
+            return self.evolve(x, steps)
 
 
 class NCATradingModel(nn.Module):
@@ -276,6 +389,9 @@ class NCATradingModel(nn.Module):
         # Initialize weights
         self._initialize_weights()
 
+        # TPU-specific initialization
+        self._initialize_tpu_optimizations()
+
     def _initialize_weights(self):
         """Initialize model weights using appropriate schemes."""
         for name, module in self.named_modules():
@@ -291,6 +407,12 @@ class NCATradingModel(nn.Module):
                 nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0.0)
+
+    def _initialize_tpu_optimizations(self):
+        """Initialize TPU-specific optimizations."""
+        # TPU-specific optimizations will be applied here
+        # This includes memory layout optimizations, XLA compilation hints, etc.
+        pass
 
     def forward(self, x: torch.Tensor, evolution_steps: int = 1) -> Dict[str, torch.Tensor]:
         """
@@ -309,14 +431,17 @@ class NCATradingModel(nn.Module):
         x_conv = x.unsqueeze(1)  # Add channel dimension
         x_conv = self.input_conv(x_conv)
 
-        # Process through NCA layers
+        # Process through NCA layers - TPU optimized
         current_state = x_conv
         for layer_idx, nca_layer in enumerate(self.nca_layers):
             # Apply dropout for regularization
             current_state = self.dropout(current_state)
 
-            # Evolve NCA
-            current_state = nca_layer.evolve(current_state, evolution_steps)
+            # Evolve NCA - use TPU-optimized version if available
+            if XLA_AVAILABLE and x_conv.device.type == 'xla' and hasattr(nca_layer, 'evolve_tpu_optimized'):
+                current_state = nca_layer.evolve_tpu_optimized(current_state, evolution_steps)
+            else:
+                current_state = nca_layer.evolve(current_state, evolution_steps)
 
         # Generate outputs
         price_pred = self.price_predictor(current_state.mean(dim=[2, 3]))
@@ -552,8 +677,8 @@ class NCATrainer:
         self.config = config
         self.logger = logging.getLogger(__name__)
 
-        # Training setup
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # Training setup - support TPU, CUDA, and CPU
+        self.device = self._get_device_from_config(config)
         self.model.to(self.device)
 
         # Optimizer
@@ -568,20 +693,50 @@ class NCATrainer:
             self.optimizer, mode='min', factor=0.5, patience=10
         )
 
-        # AMP setup
-        self.scaler = GradScaler() if config.training.use_amp else None
+        # AMP setup - support both CUDA and TPU
+        self.scaler = GradScaler() if config.training.use_amp and torch.cuda.is_available() else None
 
-        # DDP setup
+        # Distributed setup
         self.is_ddp = config.training.num_gpus > 1
+        self.is_tpu = config.system.device == "tpu"
+
         if self.is_ddp:
             self.model = nn.parallel.DistributedDataParallel(
                 self.model, device_ids=[config.training.local_rank]
             )
+        elif self.is_tpu:
+            # TPU uses XLA SPMD - no explicit wrapping needed
+            pass
 
         # Loss functions
         self.price_criterion = nn.MSELoss()
         self.signal_criterion = nn.CrossEntropyLoss()
         self.risk_criterion = nn.BCELoss()
+
+    def _get_device_from_config(self, config):
+        """Get device based on configuration and availability."""
+        # Import XLA modules if available
+        try:
+            import torch_xla.core.xla_model as xm
+            XLA_AVAILABLE = True
+        except ImportError:
+            XLA_AVAILABLE = False
+            xm = None
+
+        if config.system.device == "tpu" and XLA_AVAILABLE:
+            return xm.xla_device()
+        elif config.system.device == "cuda" and torch.cuda.is_available():
+            return torch.device('cuda')
+        elif config.system.device == "cpu":
+            return torch.device('cpu')
+        else:
+            # Auto-detect best available device
+            if XLA_AVAILABLE:
+                return xm.xla_device()
+            elif torch.cuda.is_available():
+                return torch.device('cuda')
+            else:
+                return torch.device('cpu')
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """

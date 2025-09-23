@@ -16,13 +16,22 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 import json
 import os
+import torch
 
-from config import get_config, ConfigManager
+from config import get_config, ConfigManager, detect_tpu_availability, get_tpu_device_count
 from data_handler import DataHandler, fetch_sample_data
 from nca_model import create_nca_model, load_nca_model
 from trader import create_trading_environment, create_trading_agent, TradingAgent
 from trainer import TrainingManager
 from utils import initialize_utils, LoggerUtils, PerformanceMonitor, cache
+from adaptivity import (
+    create_adaptive_grid_manager,
+    create_growth_strategies,
+    create_adaptive_nca_wrapper,
+    create_market_condition_analyzer,
+    create_performance_metrics,
+    AdaptiveNCAWrapper
+)
 
 
 class NCACommandLineInterface:
@@ -40,6 +49,15 @@ class NCACommandLineInterface:
         self.training_manager = TrainingManager(self.config)
         self.performance_monitor = PerformanceMonitor()
 
+        # Initialize adaptive components
+        self.adaptive_grid_manager = create_adaptive_grid_manager(self.config)
+        self.growth_strategies = create_growth_strategies(self.config)
+        self.market_analyzer = create_market_condition_analyzer(self.config)
+        self.performance_metrics = create_performance_metrics(self.config)
+
+        # Detect TPU availability and configure
+        self._detect_and_configure_hardware()
+
         # Initialize utilities
         initialize_utils(self.config)
 
@@ -52,6 +70,32 @@ class NCACommandLineInterface:
 
         # CLI state
         self.is_running = False
+
+    def _detect_and_configure_hardware(self):
+        """Detect available hardware and configure system accordingly."""
+        # Check for TPU availability
+        if detect_tpu_availability():
+            self.logger.info("TPU detected - configuring for TPU acceleration")
+            self.config.system.device = "tpu"
+
+            # Update TPU configuration
+            tpu_devices = get_tpu_device_count()
+            if tpu_devices > 0:
+                self.config.tpu.tpu_cores = tpu_devices
+                self.logger.info(f"TPU cores available: {tpu_devices}")
+
+            # Set TPU-specific training parameters
+            self.config.training.use_amp = True  # TPU supports bfloat16
+            self.config.training.amp_dtype = "bfloat16"
+
+        elif self.config.system.device == "auto":
+            # Auto-detect best available device
+            if torch.cuda.is_available():
+                self.config.system.device = "cuda"
+                self.logger.info("CUDA GPU detected - using GPU acceleration")
+            else:
+                self.config.system.device = "cpu"
+                self.logger.info("Using CPU for training")
 
     def run(self):
         """Run the CLI interface."""
@@ -217,6 +261,23 @@ Examples:
             action='store_true',
             help='Resume training from checkpoint'
         )
+        parser.add_argument(
+            '--tpu-cores',
+            type=int,
+            default=None,
+            help='Number of TPU cores to use (auto-detected if not specified)'
+        )
+        parser.add_argument(
+            '--xla-compile',
+            action='store_true',
+            help='Enable XLA compilation for TPU'
+        )
+        parser.add_argument(
+            '--sharding-strategy',
+            choices=['2d', '1d', 'replicated'],
+            default='2d',
+            help='TPU sharding strategy'
+        )
 
     def _add_live_parser(self, subparsers):
         """Add live trading command parser."""
@@ -301,7 +362,7 @@ Examples:
 
         parser.add_argument(
             'action',
-            choices=['create', 'load', 'save', 'info', 'list'],
+            choices=['create', 'load', 'save', 'info', 'list', 'adapt'],
             help='Model action'
         )
         parser.add_argument(
@@ -313,6 +374,17 @@ Examples:
             '--output-path',
             type=str,
             help='Output path for saved model'
+        )
+        parser.add_argument(
+            '--adaptive',
+            action='store_true',
+            help='Create adaptive NCA model'
+        )
+        parser.add_argument(
+            '--growth-strategy',
+            choices=['gradient', 'evolutionary', 'self_assembly', 'hybrid'],
+            default='gradient',
+            help='Growth strategy for adaptive model'
         )
 
     def _add_status_parser(self, subparsers):
@@ -433,6 +505,20 @@ Examples:
         """Run training."""
         self.logger.info(f"Starting {args.mode} training...")
 
+        # Apply TPU-specific arguments
+        if args.tpu_cores:
+            self.config.tpu.tpu_cores = args.tpu_cores
+        if args.xla_compile:
+            self.config.tpu.xla_compile = True
+        if args.sharding_strategy:
+            self.config.tpu.sharding_strategy = args.sharding_strategy
+
+        self.logger.info(f"Using device: {self.config.system.device}")
+        if self.config.system.device == "tpu":
+            self.logger.info(f"TPU cores: {self.config.tpu.tpu_cores}")
+            self.logger.info(f"XLA compilation: {self.config.tpu.xla_compile}")
+            self.logger.info(f"Sharding strategy: {self.config.tpu.sharding_strategy}")
+
         try:
             if args.mode == 'offline':
                 # Fetch training data
@@ -533,12 +619,34 @@ Examples:
         except Exception as e:
             self.logger.error(f"Data operation failed: {e}")
 
+    def _get_current_market_data(self) -> Dict[str, Any]:
+        """Get current market data for analysis."""
+        # This is a simplified implementation
+        # In practice, this would fetch real-time market data
+        return {
+            'prices': {'values': np.random.randn(100).tolist()},
+            'volumes': {'values': np.random.randn(100).tolist()},
+            'asset_prices': {'matrix': np.random.randn(5, 100).tolist()},
+            'prediction_error': np.random.random(),
+            'sharpe_ratio': np.random.uniform(0.5, 2.0),
+            'volatility': np.random.uniform(0.1, 0.4)
+        }
+
     def _run_model(self, args):
         """Run model operations."""
         try:
             if args.action == 'create':
-                model = self.training_manager.create_model()
-                self.logger.info("Model created successfully")
+                if args.adaptive:
+                    # Create adaptive NCA model
+                    base_model = self.training_manager.create_model()
+                    model = create_adaptive_nca_wrapper(base_model, self.config)
+                    self.logger.info("Adaptive NCA model created successfully")
+                    self.logger.info(f"  Base model: {type(base_model).__name__}")
+                    self.logger.info(f"  Adaptive wrapper: {type(model).__name__}")
+                    self.logger.info(f"  Growth strategy: {args.growth_strategy}")
+                else:
+                    model = self.training_manager.create_model()
+                    self.logger.info("Standard NCA model created successfully")
 
             elif args.action == 'load':
                 if not args.model_path:
@@ -554,6 +662,46 @@ Examples:
                 self.training_manager.save_model(args.output_path)
                 self.logger.info(f"Model saved to {args.output_path}")
 
+            elif args.action == 'adapt':
+                # Apply adaptation to current model
+                if self.training_manager.model is None:
+                    self.logger.error("No model loaded for adaptation")
+                    return
+
+                # Analyze market conditions
+                market_data = self._get_current_market_data()
+                market_analysis = self.market_analyzer.analyze_market_conditions(market_data)
+
+                # Check if adaptation is needed
+                should_adapt, reason = self.market_analyzer.should_trigger_adaptation(market_analysis)
+
+                if should_adapt:
+                    self.logger.info(f"Applying adaptation: {reason}")
+
+                    # Apply growth strategy
+                    if args.growth_strategy == 'gradient':
+                        adapted_model = self.growth_strategies.apply_gradient_growth(
+                            self.training_manager.model, 0.8
+                        )
+                    elif args.growth_strategy == 'evolutionary':
+                        adapted_model = self.growth_strategies.apply_evolutionary_growth(
+                            self.training_manager.model, lambda m: 0.5
+                        )
+                    elif args.growth_strategy == 'self_assembly':
+                        assembly_rules = [(torch.randn(10), torch.randn(10)) for _ in range(5)]
+                        adapted_model = self.growth_strategies.apply_self_assembly_growth(
+                            self.training_manager.model, assembly_rules
+                        )
+                    else:  # hybrid
+                        adapted_model = self.growth_strategies.apply_gradient_growth(
+                            self.training_manager.model, 0.8
+                        )
+
+                    self.training_manager.model = adapted_model
+                    self.logger.info("Model adaptation completed successfully")
+                else:
+                    self.logger.info(f"No adaptation needed: {reason}")
+
             elif args.action == 'info':
                 model = self.training_manager.model
                 if model is None:
@@ -567,6 +715,18 @@ Examples:
                 self.logger.info(f"  Total parameters: {total_params:,}")
                 self.logger.info(f"  Trainable parameters: {trainable_params:,}")
                 self.logger.info(f"  Device: {next(model.parameters()).device}")
+
+                # Show adaptive model info if applicable
+                if isinstance(model, AdaptiveNCAWrapper):
+                    self.logger.info("  Adaptive Model Information:")
+                    self.logger.info(f"    Current state dimension: {model.current_state_dim}")
+                    self.logger.info(f"    Evolution steps: {model.evolution_steps}")
+                    self.logger.info(f"    History length: {len(model.state_history)}")
+
+                    # Show adaptation metrics
+                    metrics = self.performance_metrics.get_current_metrics()
+                    self.logger.info(f"    Growth efficiency: {metrics.growth_efficiency:.4f}")
+                    self.logger.info(f"    Computational cost: {metrics.computational_cost:.4f}")
 
             elif args.action == 'list':
                 model_dir = self.config.system.model_dir
@@ -614,8 +774,30 @@ Examples:
         if self.training_manager.model is not None:
             total_params = sum(p.numel() for p in self.training_manager.model.parameters())
             self.logger.info(f"  Model loaded: Yes ({total_params:,} parameters)")
+
+            # Show adaptive model info if applicable
+            if isinstance(self.training_manager.model, AdaptiveNCAWrapper):
+                self.logger.info("  Adaptive Model Information:")
+                self.logger.info(f"    Current state dimension: {self.training_manager.model.current_state_dim}")
+                self.logger.info(f"    Evolution steps: {self.training_manager.model.evolution_steps}")
+                self.logger.info(f"    History length: {len(self.training_manager.model.state_history)}")
+
+                # Show adaptation metrics
+                metrics = self.training_manager.performance_metrics.get_current_metrics()
+                self.logger.info(f"    Growth efficiency: {metrics.growth_efficiency:.4f}")
+                self.logger.info(f"    Computational cost: {metrics.computational_cost:.4f}")
         else:
             self.logger.info("  Model loaded: No")
+
+        # TPU status
+        self.logger.info("TPU Status:")
+        if detect_tpu_availability():
+            self.logger.info(f"  TPU Available: Yes ({get_tpu_device_count()} cores)")
+            self.logger.info(f"  XLA Compilation: {self.config.tpu.xla_compile}")
+            self.logger.info(f"  Sharding Strategy: {self.config.tpu.sharding_strategy}")
+            self.logger.info(f"  BFloat16 Precision: {self.config.tpu.bf16_precision}")
+        else:
+            self.logger.info("  TPU Available: No")
 
         # Performance metrics
         if args.detailed:

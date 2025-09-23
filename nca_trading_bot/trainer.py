@@ -16,6 +16,20 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import autocast, GradScaler
 import torch.distributed as dist
 import torch.multiprocessing as mp
+
+# TPU/XLA imports
+try:
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.parallel_loader as pl
+    import torch_xla.distributed.xla_multiprocessing as xmp
+    import torch_xla.test.test_utils as test_utils
+    XLA_AVAILABLE = True
+except ImportError:
+    XLA_AVAILABLE = False
+    xm = None
+    pl = None
+    xmp = None
+    test_utils = None
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
 import wandb
@@ -30,6 +44,14 @@ from config import get_config
 from nca_model import NCATradingModel, NCATrainer, NCAModelCache
 from trader import TradingEnvironment, TradingAgent
 from data_handler import DataHandler
+from adaptivity import (
+    create_adaptive_grid_manager,
+    create_growth_strategies,
+    create_adaptive_nca_wrapper,
+    create_market_condition_analyzer,
+    create_performance_metrics,
+    AdaptiveNCAWrapper
+)
 
 
 class PPOTrainer:
@@ -54,7 +76,7 @@ class PPOTrainer:
         self.logger = logging.getLogger(__name__)
 
         # Device setup
-        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = device or self._get_device_from_config(config)
         self.model.to(self.device)
 
         # PPO parameters
@@ -82,9 +104,9 @@ class PPOTrainer:
             self.optimizer, mode='min', factor=0.5, patience=10, verbose=True
         )
 
-        # AMP setup
-        self.use_amp = config.training.use_amp and torch.cuda.is_available()
-        self.scaler = GradScaler() if self.use_amp else None
+        # AMP setup - support both CUDA and TPU
+        self.use_amp = config.training.use_amp and (torch.cuda.is_available() or self.device.type == 'xla')
+        self.scaler = GradScaler() if self.use_amp and torch.cuda.is_available() else None
 
         # Loss functions
         self.policy_loss_fn = nn.CrossEntropyLoss()
@@ -99,6 +121,23 @@ class PPOTrainer:
             'explained_variance': [],
             'learning_rate': []
         }
+
+    def _get_device_from_config(self, config):
+        """Get device based on configuration and availability."""
+        if config.system.device == "tpu" and XLA_AVAILABLE:
+            return xm.xla_device()
+        elif config.system.device == "cuda" and torch.cuda.is_available():
+            return torch.device('cuda')
+        elif config.system.device == "cpu":
+            return torch.device('cpu')
+        else:
+            # Auto-detect best available device
+            if XLA_AVAILABLE:
+                return xm.xla_device()
+            elif torch.cuda.is_available():
+                return torch.device('cuda')
+            else:
+                return torch.device('cpu')
 
     def compute_gae(self, rewards: torch.Tensor, values: torch.Tensor,
                    dones: torch.Tensor, next_values: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -359,7 +398,7 @@ class PPOTrainer:
 
 class DistributedTrainer:
     """
-    Distributed trainer with DDP support for multi-GPU training.
+    Distributed trainer with DDP and XLA SPMD support for multi-GPU/TPU training.
 
     Provides distributed training capabilities for large-scale NCA training.
     """
@@ -374,12 +413,19 @@ class DistributedTrainer:
         self.config = config
         self.logger = logging.getLogger(__name__)
 
-        # DDP setup
-        self.world_size = config.training.num_gpus
-        self.local_rank = config.training.local_rank
+        # Determine world size based on device type
+        if config.system.device == "tpu" and XLA_AVAILABLE:
+            self.world_size = xm.xrt_world_size()
+            self.local_rank = xm.get_ordinal()
+            self.device_type = "tpu"
+        else:
+            # GPU/CPU fallback
+            self.world_size = config.training.num_gpus
+            self.local_rank = config.training.local_rank
+            self.device_type = "gpu"
 
-        # Initialize process group
-        if self.world_size > 1:
+        # Initialize process group for GPU training
+        if self.world_size > 1 and self.device_type == "gpu":
             os.environ['MASTER_ADDR'] = 'localhost'
             os.environ['MASTER_PORT'] = '12355'
             dist.init_process_group(
@@ -388,20 +434,27 @@ class DistributedTrainer:
                 world_size=self.world_size
             )
 
-    def setup_ddp(self, model: NCATradingModel) -> DDP:
+    def setup_distributed(self, model: NCATradingModel):
         """
-        Set up Distributed Data Parallel.
+        Set up distributed training (DDP for GPU, SPMD for TPU).
 
         Args:
-            model: Model to wrap with DDP
+            model: Model to wrap with distributed training
 
         Returns:
-            DDP-wrapped model
+            Wrapped model
         """
-        if self.world_size > 1:
+        if self.device_type == "tpu" and XLA_AVAILABLE:
+            # TPU uses XLA SPMD - no explicit wrapping needed
+            self.logger.info(f"XLA SPMD initialized on TPU core {self.local_rank}")
+            return model
+        elif self.world_size > 1:
+            # GPU uses DDP
             model = DDP(model, device_ids=[self.local_rank])
             self.logger.info(f"DDP initialized on rank {self.local_rank}")
-        return model
+            return model
+        else:
+            return model
 
     def cleanup_ddp(self):
         """Clean up DDP process group."""
@@ -417,8 +470,16 @@ class DistributedTrainer:
             args: Arguments for training function
             kwargs: Keyword arguments for training function
         """
-        if self.world_size > 1:
-            # Spawn processes for distributed training
+        if self.device_type == "tpu" and XLA_AVAILABLE:
+            # TPU uses XLA multiprocessing
+            xmp.spawn(
+                train_function,
+                args=(self.world_size, *args),
+                kwargs=kwargs,
+                nprocs=self.world_size
+            )
+        elif self.world_size > 1:
+            # GPU uses multiprocessing spawn
             mp.spawn(
                 train_function,
                 args=(self.world_size, self.local_rank, *args),
@@ -426,7 +487,7 @@ class DistributedTrainer:
                 nprocs=self.world_size
             )
         else:
-            # Single GPU training
+            # Single device training
             train_function(self.local_rank, self.world_size, *args, **kwargs)
 
 
@@ -715,6 +776,12 @@ class TrainingManager:
         self.live_trainer = None
         self.data_handler = DataHandler()
 
+        # Adaptive components
+        self.adaptive_grid_manager = create_adaptive_grid_manager(config)
+        self.growth_strategies = create_growth_strategies(config)
+        self.market_analyzer = create_market_condition_analyzer(config)
+        self.performance_metrics = create_performance_metrics(config)
+
         # Training state
         self.is_training = False
         self.current_mode = None
@@ -743,17 +810,29 @@ class TrainingManager:
         else:
             self.wandb_run = None
 
-    def create_model(self) -> NCATradingModel:
+    def create_model(self, adaptive: bool = False) -> Union[NCATradingModel, AdaptiveNCAWrapper]:
         """
         Create NCA trading model.
 
+        Args:
+            adaptive: Whether to create an adaptive model
+
         Returns:
-            Initialized NCA model
+            Initialized NCA model or adaptive wrapper
         """
         from nca_model import create_nca_model
 
-        self.model = create_nca_model(self.config)
-        self.logger.info("NCA model created")
+        base_model = create_nca_model(self.config)
+
+        if adaptive:
+            # Create adaptive wrapper
+            self.model = create_adaptive_nca_wrapper(base_model, self.config)
+            self.logger.info("Adaptive NCA model created")
+            self.logger.info(f"  Base model: {type(base_model).__name__}")
+            self.logger.info(f"  Adaptive wrapper: {type(self.model).__name__}")
+        else:
+            self.model = base_model
+            self.logger.info("Standard NCA model created")
 
         return self.model
 

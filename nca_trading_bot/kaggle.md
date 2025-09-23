@@ -1,6 +1,6 @@
 # NCA Trading Bot - Kaggle Setup Guide
 
-This guide provides step-by-step instructions for setting up and running the NCA Trading Bot on Kaggle with GPU acceleration.
+This guide provides step-by-step instructions for setting up and running the NCA Trading Bot on Kaggle with GPU and TPU acceleration.
 
 ## 🚀 Kaggle Environment Setup
 
@@ -10,17 +10,22 @@ This guide provides step-by-step instructions for setting up and running the NCA
 2. Sign up for a free account
 3. Verify your email address
 
-### 2. Enable GPU Access
+### 2. Enable GPU/TPU Access
 
 1. Go to your Kaggle profile
 2. Navigate to "Settings" → "Account"
 3. Scroll down to "Accelerator" section
-4. Select "GPU T4 x2" (recommended) or "GPU P100" (alternative)
+4. Choose your preferred accelerator:
+   - **GPU T4 x2** (recommended for most users)
+   - **GPU P100** (alternative GPU option)
+   - **TPU v3-8** (for TPU-optimized training)
 
 ### 3. Create New Notebook
 
 1. Click "Code" → "New Notebook"
-2. Choose "GPU T4 x2" as accelerator
+2. Choose your preferred accelerator:
+   - **GPU T4 x2** (recommended for most users)
+   - **TPU v3-8** (for TPU-optimized training)
 3. Select "Python" as language
 4. Give your notebook a name (e.g., "NCA-Trading-Bot")
 
@@ -36,6 +41,9 @@ Run this in a Kaggle notebook cell:
 !pip install yfinance alpaca-trade-api pandas numpy matplotlib seaborn
 !pip install gymnasium scikit-learn
 !pip install tensorboard wandb
+
+# Install TPU support (optional)
+!pip install torch-xla -f https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-2.3.0+libtpu-cp310-cp310-linux_x86_64.whl
 
 # Install TA-Lib for technical indicators
 !wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
@@ -183,9 +191,59 @@ import gc
 print(f"GPU memory allocated: {torch.cuda.memory_allocated()/1024**3".2f"} GB")
 print(f"GPU memory cached: {torch.cuda.memory_reserved()/1024**3".2f"} GB")
 
+# Check TPU memory (if using TPU)
+try:
+    import torch_xla.core.xla_model as xm
+    memory_info = xm.get_memory_info(xm.xla_device())
+    print(f"TPU memory used: {memory_info.get('used_bytes', 0)/1024**3".2f"} GB")
+    print(f"TPU memory total: {memory_info.get('total_bytes', 0)/1024**3".2f"} GB")
+except ImportError:
+    print("TPU not available")
+
 # Clear memory
-torch.cuda.empty_cache()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
 gc.collect()
+```
+
+### 2. TPU Memory Management
+
+```python
+# Check TPU availability and memory
+try:
+    import torch_xla.core.xla_model as xm
+
+    print(f"TPU available: {xm.is_master_ordinal()}")
+    print(f"TPU devices: {xm.xrt_world_size()}")
+
+    # Get TPU memory info
+    memory_info = xm.get_memory_info(xm.xla_device())
+    print(f"TPU memory used: {memory_info.get('used_bytes', 0)/1024**3".2f"} GB")
+    print(f"TPU memory total: {memory_info.get('total_bytes', 0)/1024**3".2f"} GB")
+
+    # Clear TPU memory
+    xm.mark_step()
+
+except ImportError:
+    print("TPU not available - using GPU/CPU")
+```
+
+### 3. TPU-Optimized Training
+
+```python
+# Configure for TPU training
+config.system.device = "tpu"
+config.tpu.xla_compile = True
+config.tpu.sharding_strategy = "2d"
+
+# Create TPU-optimized model
+trainer = TrainingManager(config)
+model = trainer.create_model()
+
+# Train with TPU optimizations
+print(f"Training on TPU with {config.tpu.tpu_cores} cores")
+await trainer.train_offline(data, num_epochs=50)
+```
 ```
 
 ### 2. Data Persistence

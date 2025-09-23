@@ -541,6 +541,32 @@ class PerformanceMonitor:
             metrics['gpu_utilization'] = 0
             metrics['gpu_memory_percent'] = 0
 
+        # TPU metrics (if available)
+        try:
+            import torch_xla.core.xla_model as xm
+            import torch_xla.utils.utils as xu
+
+            # TPU device metrics
+            tpu_metrics = xm.get_xla_supported_devices()
+            metrics['tpu_devices'] = len(tpu_metrics)
+
+            # Memory metrics for TPU
+            if hasattr(xm, 'get_memory_info'):
+                memory_info = xm.get_memory_info(xm.xla_device())
+                metrics['tpu_memory_used'] = memory_info.get('used_bytes', 0)
+                metrics['tpu_memory_total'] = memory_info.get('total_bytes', 0)
+                metrics['tpu_memory_percent'] = (memory_info.get('used_bytes', 0) / memory_info.get('total_bytes', 1)) * 100
+
+            # XLA compilation metrics
+            metrics['xla_compilation_enabled'] = True
+
+        except ImportError:
+            metrics['tpu_devices'] = 0
+            metrics['tpu_memory_used'] = 0
+            metrics['tpu_memory_total'] = 0
+            metrics['tpu_memory_percent'] = 0
+            metrics['xla_compilation_enabled'] = False
+
         # Disk metrics
         disk = psutil.disk_usage('/')
         metrics['disk_percent'] = disk.percent
@@ -641,6 +667,40 @@ class PerformanceMonitor:
             max_drawdown = max(max_drawdown, drawdown)
 
         return max_drawdown
+
+    def get_tpu_training_metrics(self) -> Dict[str, float]:
+        """
+        Get TPU-specific training metrics.
+
+        Returns:
+            Dictionary with TPU training metrics
+        """
+        metrics = {}
+
+        try:
+            import torch_xla.core.xla_model as xm
+            import torch_xla.debug.metrics as met
+
+            # XLA compilation metrics
+            compile_time = met.metric_data('CompileTime')
+            metrics['xla_compile_time'] = compile_time if compile_time else 0
+
+            # Memory metrics
+            if hasattr(xm, 'get_memory_info'):
+                memory_info = xm.get_memory_info(xm.xla_device())
+                metrics['xla_memory_used'] = memory_info.get('used_bytes', 0)
+                metrics['xla_memory_total'] = memory_info.get('total_bytes', 0)
+
+            # Execution metrics
+            metrics['xla_device_count'] = len(xm.get_xla_supported_devices())
+
+        except ImportError:
+            metrics['xla_compile_time'] = 0
+            metrics['xla_memory_used'] = 0
+            metrics['xla_memory_total'] = 0
+            metrics['xla_device_count'] = 0
+
+        return metrics
 
     def log_metrics(self, metrics: Dict[str, float], step: int = None):
         """
