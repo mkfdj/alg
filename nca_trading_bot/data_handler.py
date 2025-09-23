@@ -15,11 +15,25 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import yfinance as yf
-import talib
 from alpaca_trade_api.rest import REST
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
-from .config import get_config
+# Technical analysis libraries (optional)
+try:
+    import talib
+    HAS_TALIB = True
+except ImportError:
+    talib = None
+    HAS_TALIB = False
+
+try:
+    import pandas_ta as ta
+    HAS_PANDAS_TA = True
+except ImportError:
+    ta = None
+    HAS_PANDAS_TA = False
+
+from config import get_config
 
 
 class DataFetcher:
@@ -214,6 +228,75 @@ class TechnicalIndicators:
         self.config = get_config()
         self.logger = logging.getLogger(__name__)
 
+        # Check available libraries
+        self.available_libraries = {
+            'talib': HAS_TALIB,
+            'pandas_ta': HAS_PANDAS_TA
+        }
+
+        # Log available libraries
+        available = [lib for lib, status in self.available_libraries.items() if status]
+        self.logger.info(f"Available technical analysis libraries: {available}")
+
+        if not any(self.available_libraries.values()):
+            self.logger.warning("No technical analysis libraries available. Using numpy/pandas fallbacks.")
+
+    def check_library_availability(self) -> Dict[str, str]:
+        """
+        Check availability of technical analysis libraries and provide recommendations.
+
+        Returns:
+            Dictionary with library status and recommendations
+        """
+        status = {}
+
+        if HAS_TALIB:
+            status['talib'] = "✅ Available - Using TA-Lib for optimal performance"
+        else:
+            status['talib'] = "❌ Not available - Install TA-Lib for best performance"
+
+        if HAS_PANDAS_TA:
+            status['pandas_ta'] = "✅ Available - Using pandas-ta as alternative"
+        else:
+            status['pandas_ta'] = "❌ Not available - Install pandas-ta for better performance"
+
+        status['numpy_fallback'] = "✅ Available - NumPy/Pandas fallbacks always available"
+
+        return status
+
+    def get_installation_instructions(self) -> str:
+        """
+        Get installation instructions for missing libraries.
+
+        Returns:
+            String with installation instructions
+        """
+        instructions = []
+
+        if not HAS_TALIB:
+            instructions.append("""
+TA-Lib Installation:
+===================
+Option 1 - Windows:
+1. Download: https://ta-lib.org/
+2. Install the C library
+3. Add C:\\ta-lib to PATH
+4. Run: pip install TA-Lib
+
+Option 2 - Linux/macOS:
+1. Install C library: sudo apt-get install ta-lib-dev (Ubuntu/Debian)
+2. Run: pip install TA-Lib
+""")
+
+        if not HAS_PANDAS_TA:
+            instructions.append("""
+pandas-ta Installation:
+=====================
+Run: pip install pandas-ta
+""")
+
+        return "\n".join(instructions) if instructions else "All libraries are properly installed!"
+
     def calculate_rsi(self, prices: np.ndarray, period: int = None) -> np.ndarray:
         """
         Calculate Relative Strength Index (RSI).
@@ -229,14 +312,52 @@ class TechnicalIndicators:
             period = self.config.data.rsi_period
 
         try:
-            rsi = talib.RSI(prices, timeperiod=period)
-            return rsi
+            if HAS_TALIB:
+                rsi = talib.RSI(prices, timeperiod=period)
+                return rsi
+            elif HAS_PANDAS_TA:
+                # Use pandas-ta as alternative
+                df = pd.DataFrame({'close': prices})
+                rsi_series = df.ta.rsi(length=period)
+                return rsi_series.values
+            else:
+                # Fallback implementation
+                return self._calculate_rsi_fallback(prices, period)
         except Exception as e:
             self.logger.error(f"Error calculating RSI: {e}")
             return np.full_like(prices, np.nan)
 
+    def _calculate_rsi_fallback(self, prices: np.ndarray, period: int) -> np.ndarray:
+        """Fallback RSI calculation using pandas."""
+        # Calculate price changes
+        price_changes = np.diff(prices)
+        price_changes = np.insert(price_changes, 0, 0)
+
+        # Separate gains and losses
+        gains = np.where(price_changes > 0, price_changes, 0)
+        losses = np.where(price_changes < 0, abs(price_changes), 0)
+
+        # Calculate average gains and losses
+        avg_gains = np.zeros_like(prices)
+        avg_losses = np.zeros_like(prices)
+
+        # First average gain/loss
+        avg_gains[period] = np.mean(gains[1:period+1])
+        avg_losses[period] = np.mean(losses[1:period+1])
+
+        # Subsequent averages
+        for i in range(period + 1, len(prices)):
+            avg_gains[i] = (avg_gains[i-1] * (period - 1) + gains[i]) / period
+            avg_losses[i] = (avg_losses[i-1] * (period - 1) + losses[i]) / period
+
+        # Calculate RS and RSI
+        rs = avg_gains / (avg_losses + 1e-10)  # Avoid division by zero
+        rsi = 100 - (100 / (1 + rs))
+
+        return rsi
+
     def calculate_macd(self, prices: np.ndarray, fast: int = None,
-                      slow: int = None, signal: int = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                       slow: int = None, signal: int = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Calculate Moving Average Convergence Divergence (MACD).
 
@@ -257,16 +378,48 @@ class TechnicalIndicators:
             signal = self.config.data.macd_signal
 
         try:
-            macd_line, signal_line, histogram = talib.MACD(
-                prices, fastperiod=fast, slowperiod=slow, signalperiod=signal
-            )
-            return macd_line, signal_line, histogram
+            if HAS_TALIB:
+                macd_line, signal_line, histogram = talib.MACD(
+                    prices, fastperiod=fast, slowperiod=slow, signalperiod=signal
+                )
+                return macd_line, signal_line, histogram
+            elif HAS_PANDAS_TA:
+                # Use pandas-ta as alternative
+                df = pd.DataFrame({'close': prices})
+                macd_result = df.ta.macd(fast=fast, slow=slow, signal=signal)
+                if macd_result is not None:
+                    macd_line = macd_result[f'MACD_{fast}_{slow}_{signal}'].values
+                    signal_line = macd_result[f'MACDs_{fast}_{slow}_{signal}'].values
+                    histogram = macd_result[f'MACDh_{fast}_{slow}_{signal}'].values
+                    return macd_line, signal_line, histogram
+                else:
+                    raise ValueError("MACD calculation failed")
+            else:
+                # Fallback implementation
+                return self._calculate_macd_fallback(prices, fast, slow, signal)
         except Exception as e:
             self.logger.error(f"Error calculating MACD: {e}")
             return np.full_like(prices, np.nan), np.full_like(prices, np.nan), np.full_like(prices, np.nan)
 
+    def _calculate_macd_fallback(self, prices: np.ndarray, fast: int, slow: int, signal: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Fallback MACD calculation using EMA."""
+        # Calculate EMAs
+        fast_ema = self._calculate_ema_fallback(prices, fast)
+        slow_ema = self._calculate_ema_fallback(prices, slow)
+
+        # Calculate MACD line
+        macd_line = fast_ema - slow_ema
+
+        # Calculate signal line (EMA of MACD line)
+        signal_line = self._calculate_ema_fallback(macd_line, signal)
+
+        # Calculate histogram
+        histogram = macd_line - signal_line
+
+        return macd_line, signal_line, histogram
+
     def calculate_bollinger_bands(self, prices: np.ndarray, period: int = None,
-                                std_dev: float = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                                 std_dev: float = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Calculate Bollinger Bands.
 
@@ -284,13 +437,44 @@ class TechnicalIndicators:
             std_dev = self.config.data.bb_std
 
         try:
-            upper, middle, lower = talib.BBANDS(
-                prices, timeperiod=period, nbdevup=std_dev, nbdevdn=std_dev, matype=0
-            )
-            return upper, middle, lower
+            if HAS_TALIB:
+                upper, middle, lower = talib.BBANDS(
+                    prices, timeperiod=period, nbdevup=std_dev, nbdevdn=std_dev, matype=0
+                )
+                return upper, middle, lower
+            elif HAS_PANDAS_TA:
+                # Use pandas-ta as alternative
+                df = pd.DataFrame({'close': prices})
+                bb_result = df.ta.bbands(length=period, std=std_dev)
+                if bb_result is not None:
+                    upper = bb_result[f'BBU_{period}_{std_dev}'].values
+                    middle = bb_result[f'BBM_{period}_{std_dev}'].values
+                    lower = bb_result[f'BBL_{period}_{std_dev}'].values
+                    return upper, middle, lower
+                else:
+                    raise ValueError("Bollinger Bands calculation failed")
+            else:
+                # Fallback implementation
+                return self._calculate_bollinger_bands_fallback(prices, period, std_dev)
         except Exception as e:
             self.logger.error(f"Error calculating Bollinger Bands: {e}")
             return np.full_like(prices, np.nan), np.full_like(prices, np.nan), np.full_like(prices, np.nan)
+
+    def _calculate_bollinger_bands_fallback(self, prices: np.ndarray, period: int, std_dev: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Fallback Bollinger Bands calculation."""
+        # Calculate middle band (SMA)
+        middle = self._calculate_sma_fallback(prices, period)
+
+        # Calculate rolling standard deviation
+        rolling_std = np.zeros_like(prices)
+        for i in range(period - 1, len(prices)):
+            rolling_std[i] = np.std(prices[i-period+1:i+1])
+
+        # Calculate upper and lower bands
+        upper = middle + (rolling_std * std_dev)
+        lower = middle - (rolling_std * std_dev)
+
+        return upper, middle, lower
 
     def calculate_sma(self, prices: np.ndarray, period: int) -> np.ndarray:
         """
@@ -304,8 +488,17 @@ class TechnicalIndicators:
             Array of SMA values
         """
         try:
-            sma = talib.SMA(prices, timeperiod=period)
-            return sma
+            if HAS_TALIB:
+                sma = talib.SMA(prices, timeperiod=period)
+                return sma
+            elif HAS_PANDAS_TA:
+                # Use pandas-ta as alternative
+                df = pd.DataFrame({'close': prices})
+                sma_series = df.ta.sma(length=period)
+                return sma_series.values
+            else:
+                # Fallback implementation
+                return self._calculate_sma_fallback(prices, period)
         except Exception as e:
             self.logger.error(f"Error calculating SMA: {e}")
             return np.full_like(prices, np.nan)
@@ -322,15 +515,45 @@ class TechnicalIndicators:
             Array of EMA values
         """
         try:
-            ema = talib.EMA(prices, timeperiod=period)
-            return ema
+            if HAS_TALIB:
+                ema = talib.EMA(prices, timeperiod=period)
+                return ema
+            elif HAS_PANDAS_TA:
+                # Use pandas-ta as alternative
+                df = pd.DataFrame({'close': prices})
+                ema_series = df.ta.ema(length=period)
+                return ema_series.values
+            else:
+                # Fallback implementation
+                return self._calculate_ema_fallback(prices, period)
         except Exception as e:
             self.logger.error(f"Error calculating EMA: {e}")
             return np.full_like(prices, np.nan)
 
+    def _calculate_sma_fallback(self, prices: np.ndarray, period: int) -> np.ndarray:
+        """Fallback SMA calculation."""
+        sma = np.full_like(prices, np.nan)
+        for i in range(period - 1, len(prices)):
+            sma[i] = np.mean(prices[i-period+1:i+1])
+        return sma
+
+    def _calculate_ema_fallback(self, prices: np.ndarray, period: int) -> np.ndarray:
+        """Fallback EMA calculation."""
+        ema = np.full_like(prices, np.nan)
+        multiplier = 2 / (period + 1)
+
+        # First EMA value is SMA
+        ema[period - 1] = np.mean(prices[:period])
+
+        # Calculate subsequent EMA values
+        for i in range(period, len(prices)):
+            ema[i] = (prices[i] * multiplier) + (ema[i-1] * (1 - multiplier))
+
+        return ema
+
     def calculate_stochastic(self, high: np.ndarray, low: np.ndarray,
-                           close: np.ndarray, k_period: int = 14,
-                           d_period: int = 3) -> Tuple[np.ndarray, np.ndarray]:
+                            close: np.ndarray, k_period: int = 14,
+                            d_period: int = 3) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculate Stochastic Oscillator.
 
@@ -345,13 +568,50 @@ class TechnicalIndicators:
             Tuple of (%K, %D)
         """
         try:
-            k_percent, d_percent = talib.STOCH(
-                high, low, close, fastk_period=k_period, slowk_period=d_period
-            )
-            return k_percent, d_percent
+            if HAS_TALIB:
+                k_percent, d_percent = talib.STOCH(
+                    high, low, close, fastk_period=k_period, slowk_period=d_period
+                )
+                return k_percent, d_percent
+            elif HAS_PANDAS_TA:
+                # Use pandas-ta as alternative
+                df = pd.DataFrame({'high': high, 'low': low, 'close': close})
+                stoch_result = df.ta.stoch(k=k_period, d=d_period)
+                if stoch_result is not None:
+                    k_percent = stoch_result[f'STOCHk_{k_period}_{d_period}_3'].values
+                    d_percent = stoch_result[f'STOCHd_{k_period}_{d_period}_3'].values
+                    return k_percent, d_percent
+                else:
+                    raise ValueError("Stochastic calculation failed")
+            else:
+                # Fallback implementation
+                return self._calculate_stochastic_fallback(high, low, close, k_period, d_period)
         except Exception as e:
             self.logger.error(f"Error calculating Stochastic: {e}")
             return np.full_like(close, np.nan), np.full_like(close, np.nan)
+
+    def _calculate_stochastic_fallback(self, high: np.ndarray, low: np.ndarray,
+                                     close: np.ndarray, k_period: int, d_period: int) -> Tuple[np.ndarray, np.ndarray]:
+        """Fallback Stochastic calculation."""
+        k_percent = np.full_like(close, np.nan)
+        d_percent = np.full_like(close, np.nan)
+
+        for i in range(k_period - 1, len(close)):
+            # Calculate %K
+            highest_high = np.max(high[i-k_period+1:i+1])
+            lowest_low = np.min(low[i-k_period+1:i+1])
+            current_close = close[i]
+
+            if highest_high - lowest_low != 0:
+                k_percent[i] = 100 * (current_close - lowest_low) / (highest_high - lowest_low)
+            else:
+                k_percent[i] = 50  # Neutral value
+
+        # Calculate %D (SMA of %K)
+        for i in range(k_period + d_period - 2, len(close)):
+            d_percent[i] = np.mean(k_percent[i-d_period+1:i+1])
+
+        return k_percent, d_percent
 
     def calculate_all_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -397,21 +657,68 @@ class TechnicalIndicators:
         return df
 
     def calculate_atr(self, high: np.ndarray, low: np.ndarray, close: np.ndarray,
-                     period: int = 14) -> np.ndarray:
+                      period: int = 14) -> np.ndarray:
         """Calculate Average True Range."""
         try:
-            return talib.ATR(high, low, close, timeperiod=period)
+            if HAS_TALIB:
+                return talib.ATR(high, low, close, timeperiod=period)
+            elif HAS_PANDAS_TA:
+                # Use pandas-ta as alternative
+                df = pd.DataFrame({'high': high, 'low': low, 'close': close})
+                atr_series = df.ta.atr(length=period)
+                return atr_series.values
+            else:
+                # Fallback implementation
+                return self._calculate_atr_fallback(high, low, close, period)
         except Exception as e:
             self.logger.error(f"Error calculating ATR: {e}")
             return np.full_like(close, np.nan)
 
+    def _calculate_atr_fallback(self, high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
+        """Fallback ATR calculation."""
+        # Calculate True Range
+        tr = np.zeros_like(high)
+        tr[0] = high[0] - low[0]  # First TR is just H-L
+
+        for i in range(1, len(high)):
+            tr1 = high[i] - low[i]
+            tr2 = abs(high[i] - close[i-1])
+            tr3 = abs(low[i] - close[i-1])
+            tr[i] = max(tr1, tr2, tr3)
+
+        # Calculate ATR using SMA of TR
+        atr = np.full_like(tr, np.nan)
+        for i in range(period - 1, len(tr)):
+            atr[i] = np.mean(tr[i-period+1:i+1])
+
+        return atr
+
     def calculate_obv(self, close: np.ndarray, volume: np.ndarray) -> np.ndarray:
         """Calculate On-Balance Volume."""
         try:
-            return talib.OBV(close, volume)
+            if HAS_TALIB:
+                return talib.OBV(close, volume)
+            else:
+                # Fallback implementation using pandas
+                return self._calculate_obv_fallback(close, volume)
         except Exception as e:
             self.logger.error(f"Error calculating OBV: {e}")
             return np.full_like(close, np.nan)
+
+    def _calculate_obv_fallback(self, close: np.ndarray, volume: np.ndarray) -> np.ndarray:
+        """Fallback OBV calculation using pandas."""
+        obv = np.zeros_like(close)
+        obv[0] = volume[0]
+
+        for i in range(1, len(close)):
+            if close[i] > close[i-1]:
+                obv[i] = obv[i-1] + volume[i]
+            elif close[i] < close[i-1]:
+                obv[i] = obv[i-1] - volume[i]
+            else:
+                obv[i] = obv[i-1]
+
+        return obv
 
 
 class DataPreprocessor:
@@ -754,7 +1061,7 @@ class DataHandler:
         return None
 
     def cache_data(self, data: pd.DataFrame, ticker: str, start_date: str,
-                   end_date: str, interval: str = "1m") -> None:
+                    end_date: str, interval: str = "1m") -> None:
         """
         Cache data to disk.
 
@@ -774,6 +1081,56 @@ class DataHandler:
             data.to_parquet(cache_file)
         except Exception as e:
             self.logger.error(f"Error caching data: {e}")
+
+    def get_library_status(self) -> Dict[str, str]:
+        """
+        Get status of all technical analysis libraries.
+
+        Returns:
+            Dictionary with library availability status
+        """
+        return self.indicators.check_library_availability()
+
+    def get_installation_help(self) -> str:
+        """
+        Get installation instructions for missing libraries.
+
+        Returns:
+            String with installation instructions
+        """
+        return self.indicators.get_installation_instructions()
+
+    def diagnose_technical_analysis_setup(self) -> str:
+        """
+        Provide comprehensive diagnosis of technical analysis setup.
+
+        Returns:
+            Diagnostic report as formatted string
+        """
+        status = self.get_library_status()
+        instructions = self.get_installation_help()
+
+        report = """
+=== Technical Analysis Setup Diagnosis ===
+"""
+
+        for lib, message in status.items():
+            report += f"{message}\n"
+
+        if instructions and instructions != "All libraries are properly installed!":
+            report += f"\n=== Installation Instructions ===\n{instructions}"
+
+        report += """
+=== Performance Recommendations ===
+- TA-Lib: Best performance, requires C library installation
+- pandas-ta: Good performance, pure Python, easy installation
+- NumPy fallbacks: Always available, slower but functional
+
+=== Testing Your Setup ===
+Run: python -c "from nca_trading_bot.data_handler import data_handler; print(data_handler.get_library_status())"
+"""
+
+        return report
 
 
 # Global data handler instance

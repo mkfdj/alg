@@ -18,7 +18,7 @@ import hashlib
 import pickle
 from pathlib import Path
 
-from .config import get_config
+from config import get_config
 
 
 class ConvGRUCell(nn.Module):
@@ -753,7 +753,7 @@ def load_nca_model(path: str, config) -> NCATradingModel:
 
 if __name__ == "__main__":
     # Example usage
-    from .config import ConfigManager
+    from config import ConfigManager
 
     print("NCA Trading Bot - Model Demo")
     print("=" * 40)

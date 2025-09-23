@@ -19,8 +19,8 @@ import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from .config import get_config
-from .nca_model import NCATradingModel
+from config import get_config
+from nca_model import NCATradingModel
 
 
 class TradingEnvironment(gym.Env):
@@ -930,7 +930,7 @@ def create_trading_agent(model: NCATradingModel, config) -> TradingAgent:
 
 if __name__ == "__main__":
     # Example usage
-    from .config import ConfigManager
+    from config import ConfigManager
 
     print("NCA Trading Bot - Trading Module Demo")
     print("=" * 40)

@@ -17,12 +17,12 @@ from typing import Dict, List, Optional, Any
 import json
 import os
 
-from .config import get_config, ConfigManager
-from .data_handler import DataHandler, fetch_sample_data
-from .nca_model import create_nca_model, load_nca_model
-from .trader import create_trading_environment, create_trading_agent, TradingAgent
-from .trainer import TrainingManager
-from .utils import initialize_utils, LoggerUtils, PerformanceMonitor, cache
+from config import get_config, ConfigManager
+from data_handler import DataHandler, fetch_sample_data
+from nca_model import create_nca_model, load_nca_model
+from trader import create_trading_environment, create_trading_agent, TradingAgent
+from trainer import TrainingManager
+from utils import initialize_utils, LoggerUtils, PerformanceMonitor, cache
 
 
 class NCACommandLineInterface:
@@ -417,7 +417,7 @@ Examples:
                     'win_rate': len([t for t in env.trades if t.get('pnl', 0) > 0]) / len(env.trades) if env.trades else 0
                 }
 
-                self.logger.info(f"{ticker} backtest completed: Reward={total_reward".2f"}, Balance=${info['portfolio_value']".2f"}")
+                self.logger.info(f"{ticker} backtest completed: Reward={total_reward:.2f}, Balance=${info['portfolio_value']:.2f}")
 
             # Display results
             self._display_backtest_results(results)
@@ -490,7 +490,7 @@ Examples:
                 self.logger.info("Using paper trading mode")
 
             # Start live trading engine
-            from .trader import LiveTradingEngine
+            from trader import LiveTradingEngine
 
             trading_engine = LiveTradingEngine(trading_agent, self.config)
             asyncio.run(trading_engine.start_trading(args.symbols))
@@ -564,8 +564,8 @@ Examples:
                 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
                 self.logger.info("Model Information:")
-                self.logger.info(f"  Total parameters: {total_params","}")
-                self.logger.info(f"  Trainable parameters: {trainable_params","}")
+                self.logger.info(f"  Total parameters: {total_params:,}")
+                self.logger.info(f"  Trainable parameters: {trainable_params:,}")
                 self.logger.info(f"  Device: {next(model.parameters()).device}")
 
             elif args.action == 'list':
@@ -613,7 +613,7 @@ Examples:
         self.logger.info("Model Status:")
         if self.training_manager.model is not None:
             total_params = sum(p.numel() for p in self.training_manager.model.parameters())
-            self.logger.info(f"  Model loaded: Yes ({total_params","} parameters)")
+            self.logger.info(f"  Model loaded: Yes ({total_params:,} parameters)")
         else:
             self.logger.info("  Model loaded: No")
 
@@ -626,6 +626,7 @@ Examples:
 
     def _run_config(self, args):
         """Run configuration operations."""
+        global config
         try:
             if args.action == 'show':
                 config_summary = self.config_manager.get_config_summary()
@@ -640,12 +641,10 @@ Examples:
                 if not args.config_path:
                     self.logger.error("Config path required for loading")
                     return
-                global config
                 config = ConfigManager(args.config_path)
                 self.logger.info(f"Configuration loaded from {args.config_path}")
 
             elif args.action == 'reset':
-                global config
                 config = ConfigManager()
                 self.logger.info("Configuration reset to defaults")
 
@@ -662,18 +661,18 @@ Examples:
 
         for ticker, result in results.items():
             self.logger.info(f"{ticker}:")
-            self.logger.info(f"  Total Reward: {result['total_reward']".2f"}")
-            self.logger.info(f"  Final Balance: ${result['final_balance']".2f"}")
+            self.logger.info(f"  Total Reward: {result['total_reward']:.2f}")
+            self.logger.info(f"  Final Balance: ${result['final_balance']:.2f}")
             self.logger.info(f"  Total Trades: {result['total_trades']}")
-            self.logger.info(f"  Win Rate: {result['win_rate']".2%"}")
+            self.logger.info(f"  Win Rate: {result['win_rate']:.2%}")
 
             total_reward += result['total_reward']
             total_trades += result['total_trades']
 
         self.logger.info("Summary:")
-        self.logger.info(f"  Overall Reward: {total_reward".2f"}")
+        self.logger.info(f"  Overall Reward: {total_reward:.2f}")
         self.logger.info(f"  Overall Trades: {total_trades}")
-        self.logger.info(f"  Average Reward per Ticker: {total_reward / len(results)".2f"}")
+        self.logger.info(f"  Average Reward per Ticker: {total_reward / len(results):.2f}")
 
     def _save_backtest_results(self, results: Dict, output_path: str):
         """Save backtest results to file."""
@@ -712,9 +711,9 @@ Examples:
             # Price statistics
             if 'Close' in ticker_data.columns:
                 prices = ticker_data['Close']
-                self.logger.info(f"  Price range: ${prices.min()".2f"} - ${prices.max()".2f"}")
-                self.logger.info(f"  Mean price: ${prices.mean()".2f"}")
-                self.logger.info(f"  Volatility: {prices.std()".4f"}")
+                self.logger.info(f"  Price range: ${prices.min():.2f} - ${prices.max():.2f}")
+                self.logger.info(f"  Mean price: ${prices.mean():.2f}")
+                self.logger.info(f"  Volatility: {prices.std():.4f}")
 
             # Technical indicators
             if len(ticker_data) > 20:

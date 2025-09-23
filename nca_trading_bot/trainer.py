@@ -26,10 +26,10 @@ import json
 from pathlib import Path
 import pickle
 
-from .config import get_config
-from .nca_model import NCATradingModel, NCATrainer, NCAModelCache
-from .trader import TradingEnvironment, TradingAgent
-from .data_handler import DataHandler
+from config import get_config
+from nca_model import NCATradingModel, NCATrainer, NCAModelCache
+from trader import TradingEnvironment, TradingAgent
+from data_handler import DataHandler
 
 
 class PPOTrainer:
@@ -750,7 +750,7 @@ class TrainingManager:
         Returns:
             Initialized NCA model
         """
-        from .nca_model import create_nca_model
+        from nca_model import create_nca_model
 
         self.model = create_nca_model(self.config)
         self.logger.info("NCA model created")
@@ -767,7 +767,7 @@ class TrainingManager:
         Returns:
             Loaded NCA model
         """
-        from .nca_model import load_nca_model
+        from nca_model import load_nca_model
 
         self.model = load_nca_model(model_path, self.config)
         self.logger.info(f"Model loaded from {model_path}")
@@ -934,7 +934,7 @@ def cleanup_distributed_training():
 
 if __name__ == "__main__":
     # Example usage
-    from .config import ConfigManager
+    from config import ConfigManager
 
     print("NCA Trading Bot - Training Module Demo")
     print("=" * 40)

@@ -23,7 +23,7 @@ import psutil
 import GPUtil
 import json
 
-from .config import get_config
+from config import get_config
 
 
 class Cache:

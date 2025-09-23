@@ -41,7 +41,7 @@ Run this in a Kaggle notebook cell:
 !wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
 !tar -xzf ta-lib-0.4.0-src.tar.gz
 !cd ta-lib && ./configure --prefix=/usr/local && make && make install
-!pip install ta-lib
+!pip install talib
 
 # Install additional dependencies
 !pip install python-dotenv rich psutil
@@ -315,7 +315,7 @@ for i in range(0, len(data), chunk_size):
 # If TA-Lib installation fails
 !apt-get update
 !apt-get install -y build-essential
-!pip install --no-cache-dir ta-lib
+!pip install --no-cache-dir talib
 
 # If PyTorch installation fails
 !pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2+cu118 \

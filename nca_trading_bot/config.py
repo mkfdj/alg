@@ -125,8 +125,8 @@ class APIConfig:
     """API configuration parameters."""
 
     # Alpaca API
-    alpaca_api_key: str = ""
-    alpaca_secret_key: str = ""
+    alpaca_api_key: str = "PKJ346E2YWMT7HCFZX09"
+    alpaca_secret_key: str = "w3LaDFeYjy3CJM9S37Ox0YQbeQIgEyfmlhFO7Y3m"
     alpaca_base_url: str = "https://paper-api.alpaca.markets"
 
     # Alpha Vantage API (fallback)
