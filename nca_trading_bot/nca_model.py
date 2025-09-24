@@ -92,7 +92,7 @@ class JAXConvGRUCell:
 
         return h_new
 
-    def _conv2d(self, x: jnp.ndarray, w: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
+    def _conv2d(self, x: jnp.ndarray, w: jnp.ndarray, bias: jnp.ndarray) -> jnp.ndarray:
         """JAX-based 2D convolution with same padding."""
         # x shape: (batch, in_channels, height, width) - NCHW format
         # w shape: (out_channels, in_channels, kernel_h, kernel_w)
@@ -103,17 +103,17 @@ class JAXConvGRUCell:
 
         output = jnp.zeros((batch_size, out_channels, height, width))
 
-        for b in range(batch_size):
+        for batch_idx in range(batch_size):
             for oc in range(out_channels):
                 conv_result = jnp.zeros((height, width))
                 for ic in range(in_channels):
                     # Convolve each input channel
                     conv = convolve2d(
-                        x[b, ic], w[oc, ic],
+                        x[batch_idx, ic], w[oc, ic],
                         mode='same', boundary='fill', fillvalue=0
                     )
                     conv_result += conv
-                output = output.at[b, oc].set(conv_result + b[oc])
+                output = output.at[batch_idx, oc].set(conv_result + bias[oc])
 
         return output
 
@@ -203,7 +203,7 @@ class JAXNCACell:
 
         return new_state, new_hidden
 
-    def _conv2d(self, x: jnp.ndarray, w: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
+    def _conv2d(self, x: jnp.ndarray, w: jnp.ndarray, bias: jnp.ndarray) -> jnp.ndarray:
         """JAX-based 2D convolution with same padding."""
         # x shape: (batch, in_channels, height, width) - NCHW format
         # w shape: (out_channels, in_channels, kernel_h, kernel_w)
@@ -214,17 +214,17 @@ class JAXNCACell:
 
         output = jnp.zeros((batch_size, out_channels, height, width))
 
-        for b in range(batch_size):
+        for batch_idx in range(batch_size):
             for oc in range(out_channels):
                 conv_result = jnp.zeros((height, width))
                 for ic in range(in_channels):
                     # Convolve each input channel
                     conv = convolve2d(
-                        x[b, ic], w[oc, ic],
+                        x[batch_idx, ic], w[oc, ic],
                         mode='same', boundary='fill', fillvalue=0
                     )
                     conv_result += conv
-                output = output.at[b, oc].set(conv_result + b[oc])
+                output = output.at[batch_idx, oc].set(conv_result + bias[oc])
 
         return output
 
