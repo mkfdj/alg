@@ -13,5 +13,4 @@ scikit-learn
 tensorboard
 PyYAML
 psutil
-pandas-ta
 GPUtil
