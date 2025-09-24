@@ -1066,7 +1066,7 @@ class JAXConvGRUCell(nn.Module):
         return h_new
 
 
-class JAXNCACell(nn.Module):
+class JAXNCACell(flax_nn.Module):
     """
     JAX/Flax Neural Cellular Automata cell with sharding support for TPU v5e-8.
 
@@ -1086,13 +1086,13 @@ class JAXNCACell(nn.Module):
         self.gamma = self.param('gamma', flax_nn.initializers.constant(0.1), (1,))
 
         # Convolutional layers for state updates
-        self.conv1 = nn.Conv(
+        self.conv1 = flax_nn.Conv(
             features=self.hidden_dim,
             kernel_size=(self.kernel_size, self.kernel_size),
             padding=self.kernel_size//2,
             dtype=self.dtype
         )
-        self.conv2 = nn.Conv(
+        self.conv2 = flax_nn.Conv(
             features=self.state_dim,
             kernel_size=(self.kernel_size, self.kernel_size),
             padding=self.kernel_size//2,
@@ -1100,14 +1100,14 @@ class JAXNCACell(nn.Module):
         )
 
         # Self-adaptation layers
-        self.adaptation_conv = nn.Conv(
+        self.adaptation_conv = flax_nn.Conv(
             features=self.state_dim,
             kernel_size=(1, 1),
             dtype=self.dtype
         )
-        self.mutation_rate = self.param('mutation_rate', nn.initializers.constant(0.001), (1,))
+        self.mutation_rate = self.param('mutation_rate', flax_nn.initializers.constant(0.001), (1,))
 
-    @nn.compact
+    @flax_nn.compact
     def __call__(self, x: jnp.ndarray, h: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         # State update
         combined = jnp.concatenate([x, h], axis=-1)
@@ -1150,7 +1150,7 @@ class JAXNCACell(nn.Module):
         return current_state
 
 
-class JAXNCATradingModel(nn.Module):
+class JAXNCATradingModel(flax_nn.Module):
     """
     Complete JAX/Flax NCA trading model with sharding support for TPU v5e-8.
 
@@ -1168,7 +1168,7 @@ class JAXNCATradingModel(nn.Module):
         self.kernel_size = self.config['nca']['kernel_size']
 
         # Input processing
-        self.input_conv = nn.Conv(
+        self.input_conv = flax_nn.Conv(
             features=self.state_dim,
             kernel_size=(1, 1),
             dtype=self.dtype
@@ -1186,37 +1186,37 @@ class JAXNCATradingModel(nn.Module):
         ]
 
         # Output processing
-        self.output_conv = nn.Conv(
+        self.output_conv = flax_nn.Conv(
             features=1,
             kernel_size=(1, 1),
             dtype=self.dtype
         )
 
         # Dropout for regularization
-        self.dropout = nn.Dropout(rate=self.config['nca']['dropout_rate'])
+        self.dropout = flax_nn.Dropout(rate=self.config['nca']['dropout_rate'])
 
         # Trading-specific heads
-        self.price_predictor = nn.Sequential([
-            nn.Dense(features=self.hidden_dim, dtype=self.dtype),
-            nn.relu,
-            nn.Dropout(rate=self.config['nca']['dropout_rate']),
-            nn.Dense(features=1, dtype=self.dtype)
+        self.price_predictor = flax_nn.Sequential([
+            flax_nn.Dense(features=self.hidden_dim, dtype=self.dtype),
+            flax_nn.relu,
+            flax_nn.Dropout(rate=self.config['nca']['dropout_rate']),
+            flax_nn.Dense(features=1, dtype=self.dtype)
         ])
 
-        self.signal_classifier = nn.Sequential([
-            nn.Dense(features=self.hidden_dim, dtype=self.dtype),
-            nn.relu,
-            nn.Dropout(rate=self.config['nca']['dropout_rate']),
-            nn.Dense(features=3, dtype=self.dtype)  # Buy, Hold, Sell
+        self.signal_classifier = flax_nn.Sequential([
+            flax_nn.Dense(features=self.hidden_dim, dtype=self.dtype),
+            flax_nn.relu,
+            flax_nn.Dropout(rate=self.config['nca']['dropout_rate']),
+            flax_nn.Dense(features=3, dtype=self.dtype)  # Buy, Hold, Sell
         ])
 
         # Risk assessment
-        self.risk_predictor = nn.Sequential([
-            nn.Dense(features=self.hidden_dim, dtype=self.dtype),
-            nn.relu,
-            nn.Dropout(rate=self.config['nca']['dropout_rate']),
-            nn.Dense(features=1, dtype=self.dtype),
-            nn.sigmoid
+        self.risk_predictor = flax_nn.Sequential([
+            flax_nn.Dense(features=self.hidden_dim, dtype=self.dtype),
+            flax_nn.relu,
+            flax_nn.Dropout(rate=self.config['nca']['dropout_rate']),
+            flax_nn.Dense(features=1, dtype=self.dtype),
+            flax_nn.sigmoid
         ])
 
         # Self-adaptation parameters
@@ -1231,7 +1231,7 @@ class JAXNCATradingModel(nn.Module):
             (1,)
         )
 
-    @nn.compact
+    @flax_nn.compact
     def __call__(self, x: jnp.ndarray, evolution_steps: int = 1, deterministic: bool = True) -> Dict[str, jnp.ndarray]:
         """
         Forward pass through JAX NCA trading model.
