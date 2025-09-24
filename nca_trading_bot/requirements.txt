@@ -12,3 +12,4 @@ tensorboard
 PyYAML
 psutil
 pandas-ta
+tensorflow
