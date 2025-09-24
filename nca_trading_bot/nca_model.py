@@ -31,10 +31,17 @@ except ValueError:
 
 from config import get_config
 
-from config import get_config
-
-# JAX/XLA setup for TPU support
-jax.config.update("jax_platform_name", "cpu")  # Default to CPU, can be overridden
+# JAX/XLA setup for TPU support - auto-detect platform
+if tpu_available:
+    try:
+        jax.config.update("jax_platform_name", "tpu")
+        print("JAX configured for TPU")
+    except Exception as e:
+        print(f"Failed to configure JAX for TPU: {e}")
+        print("Falling back to CPU")
+        jax.config.update("jax_platform_name", "cpu")
+else:
+    jax.config.update("jax_platform_name", "cpu")  # Default to CPU
 
 
 class JAXConvGRUCell:
