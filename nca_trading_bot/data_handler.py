@@ -15,7 +15,9 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import yfinance as yf
-from alpaca_trade_api.rest import REST
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 # Technical analysis libraries (optional)
@@ -53,10 +55,9 @@ class DataFetcher:
         self.alpaca = None
         if self.config.api.alpaca_api_key and self.config.api.alpaca_secret_key:
             try:
-                self.alpaca = REST(
-                    key_id=self.config.api.alpaca_api_key,
-                    secret_key=self.config.api.alpaca_secret_key,
-                    base_url=self.config.api.alpaca_base_url
+                self.alpaca = StockHistoricalDataClient(
+                    api_key=self.config.api.alpaca_api_key,
+                    secret_key=self.config.api.alpaca_secret_key
                 )
                 self.logger.info("Alpaca API initialized successfully")
             except Exception as e:
@@ -122,7 +123,7 @@ class DataFetcher:
             raise
 
     async def fetch_alpaca_data(self, ticker: str, start_date: str,
-                               end_date: str, timeframe: str = "1Min") -> pd.DataFrame:
+                                end_date: str, timeframe: str = "1Min") -> pd.DataFrame:
         """
         Fetch data from Alpaca API.
 
@@ -143,29 +144,51 @@ class DataFetcher:
         try:
             # Convert timeframe format
             timeframe_map = {
-                "1m": "1Min", "5m": "5Min", "15m": "15Min",
-                "1h": "1Hour", "1d": "1Day"
+                "1m": TimeFrame.Minute,
+                "5m": TimeFrame.Minute,
+                "15m": TimeFrame.Minute,
+                "1h": TimeFrame.Hour,
+                "1d": TimeFrame.Day
             }
-            alpaca_timeframe = timeframe_map.get(timeframe, timeframe)
 
-            bars = self.alpaca.get_bars(
-                symbol=ticker,
-                timeframe=alpaca_timeframe,
+            # Create bars request
+            request = StockBarsRequest(
+                symbol_or_symbols=ticker,
+                timeframe=timeframe_map.get(timeframe, TimeFrame.Minute),
                 start=start_date,
                 end=end_date,
                 adjustment='raw'
-            ).df
+            )
 
-            if bars.empty:
+            # For minute timeframes, set the multiplier
+            if timeframe in ["5m", "15m"]:
+                multiplier = int(timeframe[:-1])  # Remove 'm' and convert to int
+                request.timeframe = TimeFrame(multiplier, TimeFrameUnit.Minute)
+
+            bars = self.alpaca.get_stock_bars(request)
+
+            if not bars:
                 raise ValueError(f"No data found for {ticker}")
 
-            # Reset index to make timestamp a column
-            bars = bars.reset_index()
-            bars = bars[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
-            bars.columns = ['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']
+            # Convert to DataFrame
+            data = []
+            for bar in bars[ticker]:
+                data.append({
+                    'timestamp': bar.timestamp,
+                    'Open': bar.open,
+                    'High': bar.high,
+                    'Low': bar.low,
+                    'Close': bar.close,
+                    'Volume': bar.volume
+                })
 
-            self.logger.info(f"Fetched {len(bars)} records for {ticker} from Alpaca")
-            return bars
+            df = pd.DataFrame(data)
+
+            if df.empty:
+                raise ValueError(f"No data found for {ticker}")
+
+            self.logger.info(f"Fetched {len(df)} records for {ticker} from Alpaca")
+            return df
 
         except Exception as e:
             self.logger.error(f"Error fetching data for {ticker} from Alpaca: {e}")

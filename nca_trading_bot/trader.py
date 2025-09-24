@@ -13,8 +13,13 @@ import gymnasium as gym
 from gymnasium import spaces
 import torch
 from datetime import datetime, timedelta
-from alpaca_trade_api.rest import REST, TimeFrame
-from alpaca_trade_api.stream import Stream
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.stream import Stream
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -793,7 +798,7 @@ class TradingEnvironment(gym.Env):
 
 class AlpacaTrader:
     """
-    Alpaca API integration for paper trading.
+    Alpaca API integration for paper trading using alpaca-py.
 
     Provides real-time trading capabilities with risk management
     and position tracking.
@@ -809,11 +814,16 @@ class AlpacaTrader:
         self.config = config
         self.logger = logging.getLogger(__name__)
 
-        # Initialize Alpaca API
-        self.api = REST(
-            key_id=config.api.alpaca_api_key,
+        # Initialize Alpaca API clients
+        self.trading_client = TradingClient(
+            api_key=config.api.alpaca_api_key,
             secret_key=config.api.alpaca_secret_key,
-            base_url=config.api.alpaca_base_url
+            paper=True  # Use paper trading
+        )
+
+        self.data_client = StockHistoricalDataClient(
+            api_key=config.api.alpaca_api_key,
+            secret_key=config.api.alpaca_secret_key
         )
 
         # Trading state
@@ -833,7 +843,7 @@ class AlpacaTrader:
     def _update_account_info(self):
         """Update account information from Alpaca."""
         try:
-            self.account = self.api.get_account()
+            self.account = self.trading_client.get_account()
             self.logger.info(f"Account updated: ${self.account.equity}")
         except Exception as e:
             self.logger.error(f"Failed to update account info: {e}")
@@ -841,7 +851,7 @@ class AlpacaTrader:
     def get_positions(self) -> Dict[str, Dict]:
         """Get current positions."""
         try:
-            positions = self.api.list_positions()
+            positions = self.trading_client.get_all_positions()
             self.positions = {
                 pos.symbol: {
                     'qty': int(pos.qty),
@@ -857,7 +867,7 @@ class AlpacaTrader:
             return {}
 
     def place_order(self, symbol: str, qty: int, side: str,
-                   order_type: str = 'market', time_in_force: str = 'day') -> Optional[str]:
+                    order_type: str = 'market', time_in_force: str = 'day') -> Optional[str]:
         """
         Place trading order.
 
@@ -876,13 +886,15 @@ class AlpacaTrader:
             if not self._check_risk_limits(symbol, qty, side):
                 return None
 
-            order = self.api.submit_order(
+            # Create market order request
+            order_request = MarketOrderRequest(
                 symbol=symbol,
                 qty=qty,
-                side=side,
-                type=order_type,
-                time_in_force=time_in_force
+                side=OrderSide.BUY if side == 'buy' else OrderSide.SELL,
+                time_in_force=TimeInForce.DAY
             )
+
+            order = self.trading_client.submit_order(order_request)
 
             self.orders.append({
                 'id': order.id,
@@ -922,8 +934,10 @@ class AlpacaTrader:
 
         # Estimate new position value
         try:
-            quote = self.api.get_latest_quote(symbol)
-            estimated_price = quote.askprice if side == 'buy' else quote.bidprice
+            # Get latest quote using data client
+            quotes = self.data_client.get_stock_latest_quote(symbol)
+            quote = quotes[symbol]
+            estimated_price = quote.ask_price if side == 'buy' else quote.bid_price
             new_position_value = qty * estimated_price
 
             if (total_value + new_position_value) > float(self.account.buying_power) * self.max_position_size:
@@ -946,7 +960,7 @@ class AlpacaTrader:
             True if successful
         """
         try:
-            self.api.cancel_order(order_id)
+            self.trading_client.cancel_order_by_id(order_id)
             self.logger.info(f"Order cancelled: {order_id}")
             return True
         except Exception as e:
@@ -964,7 +978,7 @@ class AlpacaTrader:
             Order status dictionary
         """
         try:
-            order = self.api.get_order(order_id)
+            order = self.trading_client.get_order_by_id(order_id)
             return {
                 'id': order.id,
                 'symbol': order.symbol,
@@ -1282,8 +1296,9 @@ class TradingAgent:
         """
         try:
             # Try Alpaca first
-            quote = self.alpaca_trader.api.get_latest_quote(symbol)
-            return quote.askprice if quote else None
+            quotes = self.alpaca_trader.data_client.get_stock_latest_quote(symbol)
+            quote = quotes[symbol]
+            return quote.ask_price
         except Exception as e:
             self.logger.warning(f"Alpaca price lookup failed for {symbol}: {e}")
 
@@ -1536,21 +1551,28 @@ class LiveTradingEngine:
         self.logger.info("Stopping live trading")
 
         if self.stream:
-            await self.stream.stop_ws()
+            await self.stream.close()
 
     async def _initialize_streaming(self, symbols: List[str]):
         """Initialize real-time data streaming."""
         try:
             self.stream = Stream(
-                key_id=self.config.api.alpaca_api_key,
+                api_key=self.config.api.alpaca_api_key,
                 secret_key=self.config.api.alpaca_secret_key,
-                base_url=self.config.api.alpaca_base_url
+                raw_data=True
             )
 
             # Subscribe to market data
+            bar_handler = self._on_bar_update
+            trade_handler = self._on_trade_update
+
+            # Subscribe to bars and trades for each symbol
             for symbol in symbols:
-                self.stream.subscribe_bars(self._on_bar_update, symbol)
-                self.stream.subscribe_trades(self._on_trade_update, symbol)
+                self.stream.subscribe_bars(bar_handler, symbol)
+                self.stream.subscribe_trades(trade_handler, symbol)
+
+            # Start the stream
+            await self.stream._start()
 
             self.logger.info("Market data streaming initialized")
 

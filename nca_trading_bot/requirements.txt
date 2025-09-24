@@ -7,7 +7,7 @@ jaxlib
 flax
 optax
 yfinance
-alpaca-trade-api
+alpaca-py
 gymnasium
 scikit-learn
 tensorboard
