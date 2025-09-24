@@ -20,6 +20,22 @@ from pathlib import Path
 
 from config import get_config
 
+# Adaptive NCA imports
+try:
+    from adaptivity import (
+        create_adaptive_nca_wrapper,
+        create_market_condition_analyzer,
+        create_performance_metrics,
+        AdaptiveNCAWrapper
+    )
+    ADAPTIVITY_AVAILABLE = True
+except ImportError:
+    ADAPTIVITY_AVAILABLE = False
+    create_adaptive_nca_wrapper = None
+    create_market_condition_analyzer = None
+    create_performance_metrics = None
+    AdaptiveNCAWrapper = None
+
 # TPU/XLA imports
 try:
     import torch_xla.core.xla_model as xm
@@ -29,6 +45,29 @@ except ImportError:
     XLA_AVAILABLE = False
     xm = None
     pl = None
+
+# JAX/Flax imports for TPU v5e-8 optimization
+try:
+    import jax
+    import jax.numpy as jnp
+    from jax import random, grad, jit, vmap, pmap
+    import flax
+    from flax import linen as nn
+    import optax
+    from flax.training import train_state
+    from jax.sharding import Mesh, PartitionSpec as P
+    from jax.experimental import mesh_utils
+    JAX_AVAILABLE = True
+except ImportError:
+    JAX_AVAILABLE = False
+    jax = None
+    jnp = None
+    nn = None
+    optax = None
+    train_state = None
+    Mesh = None
+    P = None
+    mesh_utils = None
 
 
 class ConvGRUCell(nn.Module):
@@ -386,11 +425,19 @@ class NCATradingModel(nn.Module):
         # Performance tracking
         self.performance_history = []
 
+        # Adaptive components
+        self.adaptive_wrapper = None
+        self.market_analyzer = None
+        self.performance_metrics = None
+
         # Initialize weights
         self._initialize_weights()
 
         # TPU-specific initialization
         self._initialize_tpu_optimizations()
+
+        # Initialize adaptive components if available
+        self._initialize_adaptive_components()
 
     def _initialize_weights(self):
         """Initialize model weights using appropriate schemes."""
@@ -414,17 +461,43 @@ class NCATradingModel(nn.Module):
         # This includes memory layout optimizations, XLA compilation hints, etc.
         pass
 
-    def forward(self, x: torch.Tensor, evolution_steps: int = 1) -> Dict[str, torch.Tensor]:
+    def _initialize_adaptive_components(self):
+        """Initialize adaptive NCA components."""
+        if ADAPTIVITY_AVAILABLE:
+            try:
+                # Create adaptive wrapper
+                self.adaptive_wrapper = create_adaptive_nca_wrapper(self, self.config)
+
+                # Create market condition analyzer
+                self.market_analyzer = create_market_condition_analyzer(self.config)
+
+                # Create performance metrics tracker
+                self.performance_metrics = create_performance_metrics(self.config)
+
+                self.logger.info("Adaptive components initialized successfully")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize adaptive components: {e}")
+        else:
+            self.logger.info("Adaptive components not available - running in standard mode")
+
+    def forward(self, x: torch.Tensor, evolution_steps: int = 1,
+                market_data: Dict[str, float] = None) -> Dict[str, torch.Tensor]:
         """
-        Forward pass through NCA trading model.
+        Forward pass through NCA trading model with adaptive capabilities.
 
         Args:
             x: Input tensor (batch_size, seq_len, features)
             evolution_steps: Number of NCA evolution steps
+            market_data: Market condition data for adaptation
 
         Returns:
             Dictionary containing model outputs
         """
+        # Use adaptive wrapper if available and market data provided
+        if self.adaptive_wrapper and market_data:
+            return self.adaptive_wrapper.forward(x, market_data)
+
+        # Standard forward pass
         batch_size, seq_len, num_features = x.shape
 
         # Reshape for convolutional processing
@@ -451,7 +524,8 @@ class NCATradingModel(nn.Module):
         # Apply softmax to signals
         signal_probs = F.softmax(signal_logits, dim=1)
 
-        return {
+        # Add market analysis if available
+        result = {
             'price_prediction': price_pred.squeeze(),
             'signal_probabilities': signal_probs,
             'risk_probability': risk_prob.squeeze(),
@@ -459,6 +533,16 @@ class NCATradingModel(nn.Module):
             'adaptation_rate': self.adaptation_rate,
             'selection_pressure': self.selection_pressure
         }
+
+        # Add market intelligence if analyzer available
+        if self.market_analyzer and market_data:
+            try:
+                analysis = self.market_analyzer.analyze_market_conditions(market_data)
+                result['market_analysis'] = analysis
+            except Exception as e:
+                self.logger.warning(f"Market analysis failed: {e}")
+
+        return result
 
     def predict(self, x: torch.Tensor) -> Dict[str, Union[float, int]]:
         """
@@ -558,6 +642,52 @@ class NCATradingModel(nn.Module):
                     self.adaptation_rate.data *= 1.01  # Increase adaptation
                 else:
                     self.adaptation_rate.data *= 0.99  # Decrease adaptation
+
+        # Update adaptive components if available
+        if self.performance_metrics:
+            try:
+                self.performance_metrics.update_metrics({}, metrics)
+            except Exception as e:
+                self.logger.warning(f"Failed to update adaptive performance metrics: {e}")
+
+    def create_adaptive_version(self) -> Union['NCATradingModel', AdaptiveNCAWrapper]:
+        """
+        Create an adaptive version of this model.
+
+        Returns:
+            Adaptive model wrapper or original model if adaptivity not available
+        """
+        if self.adaptive_wrapper:
+            return self.adaptive_wrapper
+        elif ADAPTIVITY_AVAILABLE and create_adaptive_nca_wrapper:
+            try:
+                return create_adaptive_nca_wrapper(self, self.config)
+            except Exception as e:
+                self.logger.warning(f"Failed to create adaptive wrapper: {e}")
+                return self
+        else:
+            self.logger.info("Adaptive components not available, returning standard model")
+            return self
+
+    def analyze_market_conditions(self, market_data: Dict[str, Any]) -> Dict[str, float]:
+        """
+        Analyze market conditions using integrated market analyzer.
+
+        Args:
+            market_data: Market data for analysis
+
+        Returns:
+            Market analysis results
+        """
+        if self.market_analyzer:
+            try:
+                return self.market_analyzer.analyze_market_conditions(market_data)
+            except Exception as e:
+                self.logger.warning(f"Market analysis failed: {e}")
+                return {}
+        else:
+            self.logger.info("Market analyzer not available")
+            return {}
 
 
 class NCAModelCache:
@@ -875,18 +1005,425 @@ class NCATrainer:
         return checkpoint
 
 
-# Utility functions
-def create_nca_model(config) -> NCATradingModel:
+# JAX/Flax NCA Model for TPU v5e-8
+class JAXConvGRUCell(nn.Module):
     """
-    Create NCA trading model instance.
+    JAX/Flax Convolutional GRU cell optimized for TPU v5e-8.
+
+    Implements a convolutional version of GRU for processing spatial-temporal data
+    with JAX/Flax for TPU acceleration.
+    """
+
+    input_dim: int
+    hidden_dim: int
+    kernel_size: int = 3
+    dtype: jnp.dtype = jnp.float32
+
+    def setup(self):
+        padding = self.kernel_size // 2
+
+        # Update gate
+        self.conv_z = nn.Conv(
+            features=self.hidden_dim,
+            kernel_size=(self.kernel_size, self.kernel_size),
+            padding=padding,
+            dtype=self.dtype
+        )
+
+        # Reset gate
+        self.conv_r = nn.Conv(
+            features=self.hidden_dim,
+            kernel_size=(self.kernel_size, self.kernel_size),
+            padding=padding,
+            dtype=self.dtype
+        )
+
+        # Candidate activation
+        self.conv_h = nn.Conv(
+            features=self.hidden_dim,
+            kernel_size=(self.kernel_size, self.kernel_size),
+            padding=padding,
+            dtype=self.dtype
+        )
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray, h: jnp.ndarray) -> jnp.ndarray:
+        combined = jnp.concatenate([x, h], axis=-1)
+
+        # Update gate
+        z = nn.sigmoid(self.conv_z(combined))
+
+        # Reset gate
+        r = nn.sigmoid(self.conv_r(combined))
+
+        # Candidate activation
+        combined_r = jnp.concatenate([x, r * h], axis=-1)
+        h_tilde = nn.tanh(self.conv_h(combined_r))
+
+        # New hidden state
+        h_new = (1 - z) * h + z * h_tilde
+
+        return h_new
+
+
+class JAXNCACell(nn.Module):
+    """
+    JAX/Flax Neural Cellular Automata cell with sharding support for TPU v5e-8.
+
+    Implements the core NCA update rule with convolutional operations
+    and adaptive parameters for trading applications.
+    """
+
+    state_dim: int
+    hidden_dim: int
+    kernel_size: int = 3
+    dtype: jnp.dtype = jnp.float32
+
+    def setup(self):
+        # NCA update parameters (learnable)
+        self.alpha = self.param('alpha', nn.initializers.constant(0.1), (1,))
+        self.beta = self.param('beta', nn.initializers.constant(0.1), (1,))
+        self.gamma = self.param('gamma', nn.initializers.constant(0.1), (1,))
+
+        # Convolutional layers for state updates
+        self.conv1 = nn.Conv(
+            features=self.hidden_dim,
+            kernel_size=(self.kernel_size, self.kernel_size),
+            padding=self.kernel_size//2,
+            dtype=self.dtype
+        )
+        self.conv2 = nn.Conv(
+            features=self.state_dim,
+            kernel_size=(self.kernel_size, self.kernel_size),
+            padding=self.kernel_size//2,
+            dtype=self.dtype
+        )
+
+        # Self-adaptation layers
+        self.adaptation_conv = nn.Conv(
+            features=self.state_dim,
+            kernel_size=(1, 1),
+            dtype=self.dtype
+        )
+        self.mutation_rate = self.param('mutation_rate', nn.initializers.constant(0.001), (1,))
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray, h: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        # State update
+        combined = jnp.concatenate([x, h], axis=-1)
+        hidden_out = nn.relu(self.conv1(combined))
+        state_update = self.conv2(hidden_out)
+
+        # Apply NCA update rule
+        new_state = x + self.alpha * state_update
+
+        # Growth and decay
+        growth = self.beta * nn.sigmoid(state_update)
+        decay = self.gamma * nn.sigmoid(-state_update)
+
+        new_state = new_state + growth - decay
+
+        # Self-adaptation
+        adaptation = self.adaptation_conv(x)
+        adaptation_mask = nn.sigmoid(adaptation)
+
+        # Apply adaptation with mutation
+        mutation = jax.random.normal(jax.random.PRNGKey(0), new_state.shape) * self.mutation_rate
+        new_state = adaptation_mask * new_state + (1 - adaptation_mask) * (new_state + mutation)
+
+        # Update hidden state
+        new_hidden = nn.relu(hidden_out)
+
+        return new_state, new_hidden
+
+    def evolve(self, x: jnp.ndarray, steps: int = 1) -> jnp.ndarray:
+        """Evolve NCA for multiple steps."""
+        current_state = x
+        hidden = jnp.zeros(
+            (x.shape[0], self.hidden_dim, x.shape[2], x.shape[3]),
+            dtype=x.dtype
+        )
+
+        for _ in range(steps):
+            current_state, hidden = self(current_state, hidden)
+
+        return current_state
+
+
+class JAXNCATradingModel(nn.Module):
+    """
+    Complete JAX/Flax NCA trading model with sharding support for TPU v5e-8.
+
+    Implements a multi-layer NCA architecture optimized for financial time series
+    prediction and trading signal generation on TPUs.
+    """
+
+    config: dict
+    dtype: jnp.dtype = jnp.bfloat16  # Default to bfloat16 for TPU v5e
+
+    def setup(self):
+        self.state_dim = self.config['nca']['state_dim']
+        self.hidden_dim = self.config['nca']['hidden_dim']
+        self.num_layers = self.config['nca']['num_layers']
+        self.kernel_size = self.config['nca']['kernel_size']
+
+        # Input processing
+        self.input_conv = nn.Conv(
+            features=self.state_dim,
+            kernel_size=(1, 1),
+            dtype=self.dtype
+        )
+
+        # NCA layers
+        self.nca_layers = [
+            JAXNCACell(
+                state_dim=self.state_dim,
+                hidden_dim=self.hidden_dim,
+                kernel_size=self.kernel_size,
+                dtype=self.dtype
+            )
+            for _ in range(self.num_layers)
+        ]
+
+        # Output processing
+        self.output_conv = nn.Conv(
+            features=1,
+            kernel_size=(1, 1),
+            dtype=self.dtype
+        )
+
+        # Dropout for regularization
+        self.dropout = nn.Dropout(rate=self.config['nca']['dropout_rate'])
+
+        # Trading-specific heads
+        self.price_predictor = nn.Sequential([
+            nn.Dense(features=self.hidden_dim, dtype=self.dtype),
+            nn.relu,
+            nn.Dropout(rate=self.config['nca']['dropout_rate']),
+            nn.Dense(features=1, dtype=self.dtype)
+        ])
+
+        self.signal_classifier = nn.Sequential([
+            nn.Dense(features=self.hidden_dim, dtype=self.dtype),
+            nn.relu,
+            nn.Dropout(rate=self.config['nca']['dropout_rate']),
+            nn.Dense(features=3, dtype=self.dtype)  # Buy, Hold, Sell
+        ])
+
+        # Risk assessment
+        self.risk_predictor = nn.Sequential([
+            nn.Dense(features=self.hidden_dim, dtype=self.dtype),
+            nn.relu,
+            nn.Dropout(rate=self.config['nca']['dropout_rate']),
+            nn.Dense(features=1, dtype=self.dtype),
+            nn.sigmoid
+        ])
+
+        # Self-adaptation parameters
+        self.adaptation_rate = self.param(
+            'adaptation_rate',
+            nn.initializers.constant(self.config['nca']['adaptation_rate']),
+            (1,)
+        )
+        self.selection_pressure = self.param(
+            'selection_pressure',
+            nn.initializers.constant(self.config['nca']['selection_pressure']),
+            (1,)
+        )
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray, evolution_steps: int = 1, deterministic: bool = True) -> Dict[str, jnp.ndarray]:
+        """
+        Forward pass through JAX NCA trading model.
+
+        Args:
+            x: Input tensor (batch_size, seq_len, features)
+            evolution_steps: Number of NCA evolution steps
+            deterministic: Whether to use deterministic operations
+
+        Returns:
+            Dictionary containing model outputs
+        """
+        # Reshape for convolutional processing
+        x_conv = x[..., jnp.newaxis]  # Add channel dimension
+        x_conv = self.input_conv(x_conv)
+
+        # Process through NCA layers
+        current_state = x_conv
+        for nca_layer in self.nca_layers:
+            # Apply dropout for regularization
+            current_state = self.dropout(current_state, deterministic=deterministic)
+
+            # Evolve NCA
+            current_state = nca_layer.evolve(current_state, evolution_steps)
+
+        # Generate outputs
+        # Global average pooling
+        pooled = jnp.mean(current_state, axis=(2, 3))  # Average over spatial dims
+
+        price_pred = self.price_predictor(pooled)
+        signal_logits = self.signal_classifier(pooled)
+        risk_prob = self.risk_predictor(pooled)
+
+        # Apply softmax to signals
+        signal_probs = nn.softmax(signal_logits, axis=-1)
+
+        return {
+            'price_prediction': price_pred.squeeze(),
+            'signal_probabilities': signal_probs,
+            'risk_probability': risk_prob.squeeze(),
+            'final_state': current_state,
+            'adaptation_rate': self.adaptation_rate,
+            'selection_pressure': self.selection_pressure
+        }
+
+
+# JAX Training State and Utilities
+def create_jax_train_state(model: JAXNCATradingModel, config: dict, rng: jax.random.PRNGKey):
+    """
+    Create JAX train state with optimizer and sharding for TPU v5e-8.
+
+    Args:
+        model: JAX NCA model
+        config: Training configuration
+        rng: Random key for initialization
+
+    Returns:
+        Train state with sharding
+    """
+    # Create optimizer
+    if config['training']['jax_optimizer'] == 'adamw':
+        tx = optax.adamw(
+            learning_rate=config['nca']['learning_rate'],
+            weight_decay=config['nca']['weight_decay']
+        )
+    else:
+        tx = optax.adam(learning_rate=config['nca']['learning_rate'])
+
+    # Create sharding mesh for TPU v5e-8 (8 cores)
+    devices = jax.devices()
+    if len(devices) == 8:  # TPU v5e-8
+        mesh = Mesh(mesh_utils.create_device_mesh((1, 8)), axis_names=('data', 'model'))
+    else:
+        mesh = Mesh(devices, axis_names=('data', 'model'))
+
+    # Initialize model
+    dummy_input = jnp.ones((1, 60, 20))  # Typical input shape
+    variables = model.init(rng, dummy_input)
+
+    # Create train state with sharding
+    state = train_state.TrainState.create(
+        apply_fn=model.apply,
+        params=variables['params'],
+        tx=tx
+    )
+
+    return state, mesh
+
+
+# JAX Training Step with Sharding
+@jax.jit
+def jax_train_step(state: train_state.TrainState, batch: Dict[str, jnp.ndarray],
+                   config: dict, rng: jax.random.PRNGKey):
+    """
+    Single JAX training step optimized for TPU v5e-8.
+
+    Args:
+        state: Current train state
+        batch: Training batch
+        config: Configuration
+        rng: Random key
+
+    Returns:
+        Updated state and metrics
+    """
+    def loss_fn(params):
+        # Forward pass
+        outputs = state.apply_fn({'params': params}, batch['x'])
+
+        # Compute losses
+        price_loss = jnp.mean((outputs['price_prediction'] - batch['price_target']) ** 2)
+        signal_loss = optax.softmax_cross_entropy_with_integer_labels(
+            outputs['signal_probabilities'], batch['signal_target']
+        ).mean()
+        risk_loss = jnp.mean((outputs['risk_probability'] - batch['risk_target']) ** 2)
+
+        total_loss = price_loss + signal_loss + risk_loss
+        return total_loss, (price_loss, signal_loss, risk_loss, outputs)
+
+    # Compute gradients
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+    (loss, (price_loss, signal_loss, risk_loss, outputs)), grads = grad_fn(state.params)
+
+    # Apply gradients
+    state = state.apply_gradients(grads=grads)
+
+    # Compute metrics
+    metrics = {
+        'total_loss': loss,
+        'price_loss': price_loss,
+        'signal_loss': signal_loss,
+        'risk_loss': risk_loss,
+        'learning_rate': state.tx.learning_rate
+    }
+
+    return state, metrics
+
+
+# Utility functions
+def create_nca_model(config, adaptive: bool = False) -> Union[NCATradingModel, AdaptiveNCAWrapper]:
+    """
+    Create NCA trading model instance with optional adaptive capabilities.
+
+    Args:
+        config: Configuration object
+        adaptive: Whether to create an adaptive model
+
+    Returns:
+        Initialized NCA trading model (adaptive or standard)
+    """
+    base_model = NCATradingModel(config)
+
+    if adaptive and ADAPTIVITY_AVAILABLE:
+        try:
+            return create_adaptive_nca_wrapper(base_model, config)
+        except Exception as e:
+            print(f"Warning: Failed to create adaptive model, using standard model: {e}")
+            return base_model
+    else:
+        return base_model
+
+
+def create_jax_nca_model(config) -> JAXNCATradingModel:
+    """
+    Create JAX NCA trading model instance for TPU v5e-8.
 
     Args:
         config: Configuration object
 
     Returns:
-        Initialized NCA trading model
+        Initialized JAX NCA trading model
     """
-    model = NCATradingModel(config)
+    # Convert config to dict for JAX model
+    config_dict = {
+        'nca': {
+            'state_dim': config.nca.state_dim,
+            'hidden_dim': config.nca.hidden_dim,
+            'num_layers': config.nca.num_layers,
+            'kernel_size': config.nca.kernel_size,
+            'learning_rate': config.nca.learning_rate,
+            'weight_decay': config.nca.weight_decay,
+            'dropout_rate': config.nca.dropout_rate,
+            'adaptation_rate': config.nca.adaptation_rate,
+            'selection_pressure': config.nca.selection_pressure
+        },
+        'training': {
+            'jax_optimizer': config.training.jax_optimizer,
+            'batch_size': config.training.batch_size
+        }
+    }
+
+    model = JAXNCATradingModel(config=config_dict)
     return model
 
 

@@ -181,7 +181,55 @@ print(f"Final portfolio value = ${info['portfolio_value']".2f"}")
 
 ## 🔧 Kaggle-Specific Optimizations
 
-### 1. GPU Memory Management
+### 1. TPU/JAX Optimizations (Recommended)
+
+Since this project is optimized for TPU v5e-8, use the following setup:
+
+```python
+# Configure for TPU v5e-8
+config.system.device = "tpu"
+config.tpu.xla_compile = True
+config.tpu.sharding_strategy = "2d"
+
+# Create JAX-optimized model
+from jax_nca_model import create_jax_nca_model
+jax_model = create_jax_nca_model(config)
+
+# Use JAX training for optimal TPU performance
+from trainer import JAXPPOTrainer
+jax_trainer = JAXPPOTrainer(observation_dim, action_dim, config, jax_model)
+```
+
+### 2. Adaptive NCA Features
+
+```python
+# Enable adaptive NCA with automatic grid growth
+from nca_model import create_nca_model
+adaptive_model = create_nca_model(config, adaptive=True)
+
+# The model will automatically adapt based on:
+# - Market volatility conditions
+# - Prediction error rates
+# - Sharpe ratio performance
+# - Data complexity metrics
+```
+
+### 3. Market Intelligence Integration
+
+```python
+# Get market data enriched with intelligence
+from data_handler import data_handler
+enriched_data = await data_handler.get_enriched_market_data(
+    ticker="AAPL",
+    start_date="2023-01-01",
+    end_date="2024-01-01",
+    include_intelligence=True
+)
+
+# Data includes sentiment scores, volatility assessments, and trend indicators
+```
+
+### 4. GPU Memory Management (Legacy)
 
 ```python
 import torch

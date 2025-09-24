@@ -17,3 +17,10 @@ GPUtil
 kaggle
 kagglehub
 requests
+# JAX TPU v5e-8 specific dependencies
+jax[tpu]>=0.4.0
+libtpu-nightly
+# Additional JAX ecosystem for TPU optimization
+dm-haiku
+jmp  # Mixed precision library for JAX
+chex  # Testing and debugging utilities for JAX

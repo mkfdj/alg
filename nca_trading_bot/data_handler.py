@@ -40,6 +40,14 @@ except ImportError:
 
 from config import get_config
 
+# Market intelligence integration
+try:
+    from trainer import MarketIntelligence
+    MARKET_INTELLIGENCE_AVAILABLE = True
+except ImportError:
+    MARKET_INTELLIGENCE_AVAILABLE = False
+    MarketIntelligence = None
+
 
 class DataFetcher:
     """
@@ -1481,6 +1489,15 @@ class DataHandler:
         self.indicators = TechnicalIndicators()
         self.preprocessor = DataPreprocessor()
 
+        # Market intelligence integration
+        self.market_intelligence = None
+        if MARKET_INTELLIGENCE_AVAILABLE:
+            try:
+                self.market_intelligence = MarketIntelligence(self.config)
+                self.logger.info("Market intelligence integrated successfully")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize market intelligence: {e}")
+
     async def get_historical_data(self, ticker: str, start_date: str,
                                   end_date: str, interval: str = "1m") -> pd.DataFrame:
         """
@@ -1945,6 +1962,64 @@ Run: python -c "from nca_trading_bot.data_handler import data_handler; print(dat
 """
 
         return report
+
+    async def get_enriched_market_data(self, ticker: str, start_date: str,
+                                      end_date: str, interval: str = "1m",
+                                      include_intelligence: bool = True) -> Dict[str, Any]:
+        """
+        Get market data enriched with technical indicators and market intelligence.
+
+        Args:
+            ticker: Stock ticker symbol
+            start_date: Start date
+            end_date: End date
+            interval: Data interval
+            include_intelligence: Whether to include market intelligence
+
+        Returns:
+            Dictionary with enriched market data
+        """
+        # Get basic market data
+        market_data = await self.get_historical_data(ticker, start_date, end_date, interval)
+
+        enriched_data = {
+            'market_data': market_data,
+            'ticker': ticker,
+            'date_range': {'start': start_date, 'end': end_date},
+            'interval': interval
+        }
+
+        # Add market intelligence if available
+        if include_intelligence and self.market_intelligence:
+            try:
+                intelligence = await self.market_intelligence.query_market_data(
+                    ticker, "market_analysis"
+                )
+                enriched_data['market_intelligence'] = intelligence
+
+                # Add intelligence-based features to market data
+                if not market_data.empty:
+                    # Add sentiment score as a feature
+                    sentiment_score = intelligence.get('sentiment_score', 0.0)
+                    market_data['sentiment_score'] = sentiment_score
+
+                    # Add volatility assessment
+                    volatility = intelligence.get('volatility', 'medium')
+                    vol_score = {'low': -1, 'medium': 0, 'high': 1}.get(volatility, 0)
+                    market_data['intelligence_volatility'] = vol_score
+
+                    # Add market trend indicator
+                    trend = intelligence.get('market_trend', 'sideways')
+                    trend_score = {'down': -1, 'sideways': 0, 'up': 1}.get(trend, 0)
+                    market_data['intelligence_trend'] = trend_score
+
+                self.logger.info(f"Added market intelligence for {ticker}")
+
+            except Exception as e:
+                self.logger.warning(f"Failed to get market intelligence for {ticker}: {e}")
+                enriched_data['market_intelligence_error'] = str(e)
+
+        return enriched_data
 
 
 # Global data handler instance

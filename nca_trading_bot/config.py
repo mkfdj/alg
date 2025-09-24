@@ -110,7 +110,7 @@ class TradingConfig:
 
 @dataclass
 class TrainingConfig:
-    """Training configuration parameters."""
+    """Training configuration parameters with JAX/TPU optimizations."""
 
     # RL parameters
     gamma: float = 0.99             # Discount factor
@@ -119,19 +119,27 @@ class TrainingConfig:
     entropy_coeff: float = 0.01     # Entropy coefficient
     value_coeff: float = 0.5         # Value function coefficient
 
-    # Training hyperparameters
-    batch_size: int = 64
+    # Training hyperparameters - optimized for TPU v5e-8
+    batch_size: int = 2048          # Large batches for TPU efficiency (1024+)
+    micro_batch_size: int = 256     # Micro-batch size for gradient accumulation
+    gradient_accumulation_steps: int = 8  # Accumulate gradients over micro-batches
     num_epochs: int = 10
     max_grad_norm: float = 0.5
     target_kl: float = 0.01
+
+    # JAX-specific parameters
+    use_jax: bool = True            # Use JAX for training on TPU
+    jax_optimizer: str = "adamw"    # adamw, adam, sgd
+    jax_lr_schedule: str = "cosine" # cosine, linear, constant
 
     # DDP parameters (deprecated - use TPU config instead)
     num_gpus: int = 2
     local_rank: int = -1
 
-    # AMP parameters
-    use_amp: bool = True
-    amp_dtype: str = "float16"
+    # Mixed precision parameters (JAX)
+    use_mixed_precision: bool = True
+    precision_dtype: str = "bf16"   # bf16 preferred for TPU v5e-8
+    compute_dtype: str = "f32"      # f32 for stable computations
 
     # Checkpointing
     save_freq: int = 1000
@@ -161,32 +169,55 @@ class APIConfig:
 
 @dataclass
 class TPUConfig:
-    """TPU-specific configuration parameters."""
+    """TPU-specific configuration parameters for JAX/TPU v5e-8."""
 
-    # TPU hardware
+    # TPU hardware - v5e-8 specific
     tpu_cores: int = 8  # TPU v5e-8 has 8 cores
     tpu_chips: int = 1  # Single host by default
-    tpu_topology: str = "2x4"  # TPU v5e-8 topology
+    tpu_topology: str = "2x4"  # TPU v5e-8 topology (2x4 = 8 cores)
 
-    # XLA compilation
+    # JAX/TPU optimizations for v5e-8
+    use_jax: bool = True  # Use JAX instead of PyTorch for TPU
+    jax_backend: str = "tpu"  # JAX backend: tpu, gpu, cpu
+
+    # Mixed precision - bfloat16 preferred for TPU v5e
+    mixed_precision: bool = True
+    precision_dtype: str = "bf16"  # bf16 (bfloat16) or f16 (float16)
+    compute_dtype: str = "f32"  # f32 for stable gradients
+
+    # Sharding configuration for distributed training
+    enable_sharding: bool = True
+    sharding_strategy: str = "2d"  # 2d, 1d, replicated, auto
+    mesh_shape: Tuple[int, int] = (1, 8)  # (chips, cores_per_chip) for v5e-8
+    axis_names: Tuple[str, str] = ("data", "model")  # Sharding axis names
+
+    # Large batch optimization
+    batch_size: int = 2048  # Large batches for TPU efficiency (1024+)
+    micro_batch_size: int = 256  # Micro-batch for gradient accumulation
+    gradient_accumulation_steps: int = 8
+
+    # Memory management for 40GB storage
+    max_memory_gb: float = 35.0  # Fill to 35GB for failsafe (out of 40GB)
+    memory_fraction: float = 0.875  # 35/40 = 0.875
+    enable_memory_optimization: bool = True
+
+    # XLA compilation and optimization
     xla_compile: bool = True
+    xla_persistent_cache: bool = True
     xla_memory_fraction: float = 0.8
     xla_precompile: bool = False
 
-    # SPMD configuration
-    spmd_sharding: bool = True
-    sharding_strategy: str = "2d"  # 2d, 1d, replicated
-    mesh_shape: Tuple[int, int] = (1, 8)  # (chips, cores_per_chip)
-
     # TPU-specific optimizations
-    bf16_precision: bool = True  # TPU v5e-8 supports bfloat16
     matmul_precision: str = "high"  # high, medium, low
     enable_fusion: bool = True
+    enable_remat: bool = True  # Recompute for memory efficiency
+    remat_policy: str = "dots_with_no_batch_dims"  # Rematerialization policy
 
     # Performance monitoring
     tpu_metrics_enabled: bool = True
     xla_metrics_enabled: bool = True
     memory_stats_enabled: bool = True
+    profiling_enabled: bool = False
 
 
 @dataclass

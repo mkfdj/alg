@@ -31,6 +31,14 @@ from jax.tree_util import tree_flatten, tree_unflatten
 
 from config import get_config
 
+# Adaptive NCA integration
+try:
+    from adaptivity import create_performance_metrics
+    ADAPTIVITY_AVAILABLE = True
+except ImportError:
+    ADAPTIVITY_AVAILABLE = False
+    create_performance_metrics = None
+
 
 class Cache:
     """
@@ -1241,10 +1249,20 @@ jax_incremental_compute = JAXIncrementalCompute()
 
 def initialize_utils(config):
     """Initialize global utility instances."""
-    global risk_calculator, jax_tensor_cache
+    global risk_calculator, jax_tensor_cache, performance_metrics
     risk_calculator = RiskCalculator(config)
     # Update JAX cache config if needed
     jax_tensor_cache.config = config
+
+    # Initialize adaptive performance metrics if available
+    if ADAPTIVITY_AVAILABLE and create_performance_metrics:
+        try:
+            performance_metrics = create_performance_metrics(config)
+        except Exception as e:
+            print(f"Warning: Failed to initialize adaptive performance metrics: {e}")
+            performance_metrics = None
+    else:
+        performance_metrics = None
 
 
 if __name__ == "__main__":

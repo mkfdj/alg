@@ -31,11 +31,13 @@ import torch.multiprocessing as mp
 # JAX/Flax imports for PPO
 import jax
 import jax.numpy as jnp
-from jax import random, grad, jit, vmap
+from jax import random, grad, jit, vmap, pmap
 import flax
 from flax import linen as nn
 import optax
 from flax.training import train_state
+from jax.sharding import Mesh, PartitionSpec as P
+from jax.experimental import mesh_utils
 
 # TPU/XLA imports
 try:
@@ -159,6 +161,14 @@ class PPOTrainer:
         self.performance_history = []
         self.sharpe_threshold = 0.5
 
+        # Integration with adaptive NCA components
+        self.adaptive_grid_manager = None
+        self.growth_strategies = None
+        self.market_condition_analyzer = None
+
+        # Initialize adaptive components
+        self._initialize_adaptive_components()
+
     def _get_device_from_config(self, config):
         """Get device based on configuration and availability."""
         if config.system.device == "tpu" and XLA_AVAILABLE:
@@ -187,6 +197,24 @@ class PPOTrainer:
         """
         self.jax_ppo_trainer = JAXPPOTrainer(observation_dim, action_dim, self.config, nca_model)
         self.logger.info("JAX PPO trainer initialized for online learning")
+
+    def _initialize_adaptive_components(self):
+        """Initialize adaptive NCA components for enhanced training."""
+        try:
+            from adaptivity import (
+                create_adaptive_grid_manager,
+                create_growth_strategies,
+                create_market_condition_analyzer
+            )
+
+            self.adaptive_grid_manager = create_adaptive_grid_manager(self.config)
+            self.growth_strategies = create_growth_strategies(self.config)
+            self.market_condition_analyzer = create_market_condition_analyzer(self.config)
+
+            self.logger.info("Adaptive components initialized in trainer")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize adaptive components in trainer: {e}")
 
     async def get_market_intelligence(self, symbol: str, context: str = "trading_decision") -> Dict[str, Any]:
         """
@@ -558,6 +586,389 @@ class PPOTrainer:
             total_metrics = epoch_metrics
 
         return total_metrics
+
+
+class JAXPPOTrainer:
+    """
+    JAX PPO trainer optimized for TPU v5e-8 with sharding support.
+
+    Implements PPO algorithm using JAX/Flax for distributed training on TPUs.
+    """
+
+    def __init__(self, observation_dim: int, action_dim: int, config, nca_model=None):
+        """
+        Initialize JAX PPO trainer.
+
+        Args:
+            observation_dim: Observation space dimension
+            action_dim: Action space dimension
+            config: Training configuration
+            nca_model: Adaptive NCA model for growth triggering
+        """
+        self.observation_dim = observation_dim
+        self.action_dim = action_dim
+        self.config = config
+        self.nca_model = nca_model
+
+        # PPO parameters
+        self.gamma = config.training.gamma
+        self.gae_lambda = config.training.gae_lambda
+        self.clip_ratio = config.training.clip_ratio
+        self.entropy_coeff = config.training.entropy_coeff
+        self.value_coeff = config.training.value_coeff
+        self.target_kl = config.training.target_kl
+
+        # Training parameters
+        self.batch_size = config.training.batch_size
+        self.micro_batch_size = config.training.micro_batch_size
+        self.gradient_accumulation_steps = config.training.gradient_accumulation_steps
+        self.num_epochs = config.training.num_epochs
+        self.max_grad_norm = config.training.max_grad_norm
+
+        # JAX setup
+        self.rng = random.PRNGKey(42)
+        self.dtype = jnp.bfloat16 if config.training.precision_dtype == "bf16" else jnp.float16
+
+        # Sharding setup for TPU v5e-8
+        self.setup_sharding()
+
+        # Actor-Critic network
+        self.actor_critic = self.create_actor_critic_network()
+
+        # Optimizer
+        self.setup_optimizer()
+
+        # Training state
+        self.train_state = None
+
+        # Experience buffer
+        self.buffer = {
+            'observations': [],
+            'actions': [],
+            'log_probs': [],
+            'values': [],
+            'rewards': [],
+            'dones': []
+        }
+
+        # Performance tracking
+        self.sharpe_history = []
+        self.performance_history = []
+
+    def setup_sharding(self):
+        """Setup JAX sharding for TPU v5e-8."""
+        devices = jax.devices()
+        if len(devices) == 8:  # TPU v5e-8
+            self.mesh = Mesh(mesh_utils.create_device_mesh((1, 8)), axis_names=('data', 'model'))
+            self.data_sharding = P('data', None)  # Shard data across devices
+            self.model_sharding = P(None, 'model')  # Replicate model across devices
+        else:
+            # Fallback for other configurations
+            self.mesh = Mesh(devices, axis_names=('data', 'model'))
+            self.data_sharding = P(None, None)
+            self.model_sharding = P(None, None)
+
+    def create_actor_critic_network(self) -> nn.Module:
+        """
+        Create JAX actor-critic network for PPO.
+
+        Returns:
+            JAX actor-critic network
+        """
+        class ActorCritic(nn.Module):
+            """Actor-Critic network for PPO."""
+            action_dim: int
+            hidden_dim: int = 256
+            dtype: jnp.dtype = jnp.bfloat16
+
+            @nn.compact
+            def __call__(self, x, deterministic=False):
+                # Shared layers
+                x = nn.Dense(self.hidden_dim, dtype=self.dtype)(x)
+                x = nn.relu(x)
+                x = nn.Dropout(0.1, deterministic=deterministic)(x)
+
+                x = nn.Dense(self.hidden_dim, dtype=self.dtype)(x)
+                x = nn.relu(x)
+                x = nn.Dropout(0.1, deterministic=deterministic)(x)
+
+                # Actor head
+                logits = nn.Dense(self.action_dim, dtype=self.dtype)(x)
+
+                # Critic head
+                value = nn.Dense(1, dtype=self.dtype)(x)
+
+                return logits, value.squeeze()
+
+        return ActorCritic(action_dim=self.action_dim, dtype=self.dtype)
+
+    def setup_optimizer(self):
+        """Setup JAX optimizer with sharding."""
+        # Create optimizer
+        if self.config.training.jax_optimizer == 'adamw':
+            self.tx = optax.adamw(
+                learning_rate=self.config.nca.learning_rate,
+                weight_decay=self.config.nca.weight_decay,
+                b1=0.9, b2=0.999, eps=1e-8
+            )
+        else:
+            self.tx = optax.adam(
+                learning_rate=self.config.nca.learning_rate,
+                b1=0.9, b2=0.999, eps=1e-8
+            )
+
+        # Add gradient clipping
+        self.tx = optax.chain(
+            optax.clip_by_global_norm(self.max_grad_norm),
+            self.tx
+        )
+
+    def initialize_train_state(self):
+        """Initialize JAX train state."""
+        # Create dummy input
+        dummy_obs = jnp.zeros((1, self.observation_dim), dtype=self.dtype)
+
+        # Initialize network
+        variables = self.actor_critic.init(self.rng, dummy_obs)
+
+        # Create train state
+        self.train_state = train_state.TrainState.create(
+            apply_fn=self.actor_critic.apply,
+            params=variables,
+            tx=self.tx
+        )
+
+    @jax.jit
+    def get_action(self, observation: jnp.ndarray) -> Tuple[int, float, float]:
+        """
+        Get action from policy with JAX.
+
+        Args:
+            observation: Current observation
+
+        Returns:
+            Tuple of (action, log_prob, value)
+        """
+        if self.train_state is None:
+            self.initialize_train_state()
+
+        logits, value = self.train_state.apply_fn(
+            self.train_state.params, observation, deterministic=False
+        )
+
+        # Sample action
+        action_probs = nn.softmax(logits, axis=-1)
+        action = jax.random.categorical(self.rng, logits)
+        log_prob = jnp.log(action_probs[jnp.arange(action_probs.shape[0]), action])
+
+        return action.item(), log_prob.item(), value.item()
+
+    def store_transition(self, obs: np.ndarray, action: int, log_prob: float,
+                        value: float, reward: float, done: bool):
+        """
+        Store transition in experience buffer.
+
+        Args:
+            obs: Observation
+            action: Action taken
+            log_prob: Log probability of action
+            value: Value estimate
+            reward: Reward received
+            done: Whether episode ended
+        """
+        self.buffer['observations'].append(obs)
+        self.buffer['actions'].append(action)
+        self.buffer['log_probs'].append(log_prob)
+        self.buffer['values'].append(value)
+        self.buffer['rewards'].append(reward)
+        self.buffer['dones'].append(done)
+
+    def compute_gae(self, rewards: jnp.ndarray, values: jnp.ndarray,
+                   dones: jnp.ndarray, next_values: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        """
+        Compute Generalized Advantage Estimation with JAX.
+
+        Args:
+            rewards: Reward tensor
+            values: Value estimates
+            dones: Done flags
+            next_values: Next state value estimates
+
+        Returns:
+            Tuple of (advantages, returns)
+        """
+        advantages = jnp.zeros_like(rewards)
+        returns = jnp.zeros_like(rewards)
+
+        last_advantage = 0
+        last_return = 0
+
+        for t in reversed(range(len(rewards))):
+            if t == len(rewards) - 1:
+                next_value = next_values[t]
+                next_advantage = 0
+            else:
+                next_value = values[t + 1]
+                next_advantage = advantages[t + 1]
+
+            delta = rewards[t] + self.gamma * next_value * (1 - dones[t]) - values[t]
+            advantages = advantages.at[t].set(delta + self.gamma * self.gae_lambda * next_advantage * (1 - dones[t]))
+            returns = returns.at[t].set(advantages[t] + values[t])
+
+        return advantages, returns
+
+    @jax.jit
+    def train_step(self, batch: Dict[str, jnp.ndarray]) -> Dict[str, float]:
+        """
+        Single JAX training step with sharding.
+
+        Args:
+            batch: Training batch
+
+        Returns:
+            Dictionary with training metrics
+        """
+        def loss_fn(params):
+            # Forward pass
+            logits, values = self.train_state.apply_fn(params, batch['observations'])
+
+            # Policy loss
+            action_probs = nn.softmax(logits, axis=-1)
+            selected_log_probs = jnp.log(action_probs[jnp.arange(logits.shape[0]), batch['actions']])
+
+            ratio = jnp.exp(selected_log_probs - batch['old_log_probs'])
+            clipped_ratio = jnp.clip(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio)
+
+            policy_loss = -jnp.minimum(ratio * batch['advantages'], clipped_ratio * batch['advantages']).mean()
+
+            # Value loss
+            value_loss = jnp.mean((values - batch['returns']) ** 2)
+
+            # Entropy bonus
+            entropy = -(action_probs * jnp.log(action_probs + 1e-8)).sum(axis=-1).mean()
+
+            # Total loss
+            total_loss = policy_loss + self.value_coeff * value_loss - self.entropy_coeff * entropy
+
+            return total_loss, (policy_loss, value_loss, entropy)
+
+        # Compute gradients
+        grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+        (loss, (policy_loss, value_loss, entropy)), grads = grad_fn(self.train_state.params)
+
+        # Apply gradients
+        self.train_state = self.train_state.apply_gradients(grads=grads)
+
+        return {
+            'total_loss': float(loss),
+            'policy_loss': float(policy_loss),
+            'value_loss': float(value_loss),
+            'entropy': float(entropy)
+        }
+
+    def update_policy(self, num_epochs: int = None) -> Dict[str, float]:
+        """
+        Update policy using PPO algorithm.
+
+        Args:
+            num_epochs: Number of training epochs
+
+        Returns:
+            Dictionary with training metrics
+        """
+        if num_epochs is None:
+            num_epochs = self.num_epochs
+
+        # Convert buffer to JAX arrays
+        observations = jnp.array(self.buffer['observations'], dtype=self.dtype)
+        actions = jnp.array(self.buffer['actions'], dtype=jnp.int32)
+        old_log_probs = jnp.array(self.buffer['log_probs'], dtype=self.dtype)
+        values = jnp.array(self.buffer['values'], dtype=self.dtype)
+        rewards = jnp.array(self.buffer['rewards'], dtype=self.dtype)
+        dones = jnp.array(self.buffer['dones'], dtype=self.dtype)
+
+        # Compute advantages and returns
+        next_values = jnp.concatenate([values[1:], jnp.array([0.0])])
+        advantages, returns = self.compute_gae(rewards, values, dones, next_values)
+
+        # Normalize advantages
+        advantages = (advantages - jnp.mean(advantages)) / (jnp.std(advantages) + 1e-8)
+
+        # Create dataset
+        dataset = {
+            'observations': observations,
+            'actions': actions,
+            'old_log_probs': old_log_probs,
+            'advantages': advantages,
+            'returns': returns
+        }
+
+        # Training loop
+        total_metrics = {}
+        for epoch in range(num_epochs):
+            # Shuffle data
+            indices = jax.random.permutation(self.rng, len(observations))
+            for key in dataset:
+                dataset[key] = dataset[key][indices]
+
+            # Mini-batch training
+            epoch_metrics = {'policy_loss': 0, 'value_loss': 0, 'entropy': 0}
+            num_batches = 0
+
+            for i in range(0, len(observations), self.micro_batch_size):
+                batch = {k: v[i:i+self.micro_batch_size] for k, v in dataset.items()}
+                batch_metrics = self.train_step(batch)
+
+                for key in epoch_metrics:
+                    epoch_metrics[key] += batch_metrics[key]
+                num_batches += 1
+
+            # Average metrics
+            for key in epoch_metrics:
+                epoch_metrics[key] /= num_batches
+
+            total_metrics = epoch_metrics
+
+        # Clear buffer
+        for key in self.buffer:
+            self.buffer[key].clear()
+
+        return total_metrics
+
+    def update_performance(self, returns: List[float]):
+        """
+        Update performance metrics for adaptation.
+
+        Args:
+            returns: Recent trading returns
+        """
+        # Calculate Sharpe ratio
+        returns_array = jnp.array(returns)
+        sharpe_ratio = jnp.mean(returns_array) / (jnp.std(returns_array) + 1e-8) * jnp.sqrt(252)  # Annualized
+
+        self.sharpe_history.append(float(sharpe_ratio))
+
+        # Keep history bounded
+        if len(self.sharpe_history) > 100:
+            self.sharpe_history = self.sharpe_history[-100:]
+
+    def get_performance_metrics(self) -> Dict[str, float]:
+        """
+        Get current performance metrics.
+
+        Returns:
+            Dictionary with performance metrics
+        """
+        if not self.sharpe_history:
+            return {'sharpe_ratio': 0.0, 'avg_sharpe': 0.0}
+
+        current_sharpe = self.sharpe_history[-1] if self.sharpe_history else 0.0
+        avg_sharpe = float(jnp.mean(jnp.array(self.sharpe_history[-10:])))  # Last 10 periods
+
+        return {
+            'sharpe_ratio': current_sharpe,
+            'avg_sharpe': avg_sharpe
+        }
 
 
 class DistributedTrainer:
