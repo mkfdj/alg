@@ -52,7 +52,7 @@ try:
     import jax.numpy as jnp
     from jax import random, grad, jit, vmap, pmap
     import flax
-    from flax import linen as nn
+    from flax import linen as flax_nn
     import optax
     from flax.training import train_state
     from jax.sharding import Mesh, PartitionSpec as P
@@ -62,7 +62,7 @@ except ImportError:
     JAX_AVAILABLE = False
     jax = None
     jnp = None
-    nn = None
+    flax_nn = None
     optax = None
     train_state = None
     Mesh = None
@@ -1046,19 +1046,19 @@ class JAXConvGRUCell(nn.Module):
             dtype=self.dtype
         )
 
-    @nn.compact
+    @flax_nn.compact
     def __call__(self, x: jnp.ndarray, h: jnp.ndarray) -> jnp.ndarray:
         combined = jnp.concatenate([x, h], axis=-1)
 
         # Update gate
-        z = nn.sigmoid(self.conv_z(combined))
+        z = flax_nn.sigmoid(self.conv_z(combined))
 
         # Reset gate
-        r = nn.sigmoid(self.conv_r(combined))
+        r = flax_nn.sigmoid(self.conv_r(combined))
 
         # Candidate activation
         combined_r = jnp.concatenate([x, r * h], axis=-1)
-        h_tilde = nn.tanh(self.conv_h(combined_r))
+        h_tilde = flax_nn.tanh(self.conv_h(combined_r))
 
         # New hidden state
         h_new = (1 - z) * h + z * h_tilde
@@ -1081,9 +1081,9 @@ class JAXNCACell(nn.Module):
 
     def setup(self):
         # NCA update parameters (learnable)
-        self.alpha = self.param('alpha', nn.initializers.constant(0.1), (1,))
-        self.beta = self.param('beta', nn.initializers.constant(0.1), (1,))
-        self.gamma = self.param('gamma', nn.initializers.constant(0.1), (1,))
+        self.alpha = self.param('alpha', flax_nn.initializers.constant(0.1), (1,))
+        self.beta = self.param('beta', flax_nn.initializers.constant(0.1), (1,))
+        self.gamma = self.param('gamma', flax_nn.initializers.constant(0.1), (1,))
 
         # Convolutional layers for state updates
         self.conv1 = nn.Conv(
@@ -1111,28 +1111,28 @@ class JAXNCACell(nn.Module):
     def __call__(self, x: jnp.ndarray, h: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         # State update
         combined = jnp.concatenate([x, h], axis=-1)
-        hidden_out = nn.relu(self.conv1(combined))
+        hidden_out = flax_nn.relu(self.conv1(combined))
         state_update = self.conv2(hidden_out)
 
         # Apply NCA update rule
         new_state = x + self.alpha * state_update
 
         # Growth and decay
-        growth = self.beta * nn.sigmoid(state_update)
-        decay = self.gamma * nn.sigmoid(-state_update)
+        growth = self.beta * flax_nn.sigmoid(state_update)
+        decay = self.gamma * flax_nn.sigmoid(-state_update)
 
         new_state = new_state + growth - decay
 
         # Self-adaptation
         adaptation = self.adaptation_conv(x)
-        adaptation_mask = nn.sigmoid(adaptation)
+        adaptation_mask = flax_nn.sigmoid(adaptation)
 
         # Apply adaptation with mutation
         mutation = jax.random.normal(jax.random.PRNGKey(0), new_state.shape) * self.mutation_rate
         new_state = adaptation_mask * new_state + (1 - adaptation_mask) * (new_state + mutation)
 
         # Update hidden state
-        new_hidden = nn.relu(hidden_out)
+        new_hidden = flax_nn.relu(hidden_out)
 
         return new_state, new_hidden
 
@@ -1222,12 +1222,12 @@ class JAXNCATradingModel(nn.Module):
         # Self-adaptation parameters
         self.adaptation_rate = self.param(
             'adaptation_rate',
-            nn.initializers.constant(self.config['nca']['adaptation_rate']),
+            flax_nn.initializers.constant(self.config['nca']['adaptation_rate']),
             (1,)
         )
         self.selection_pressure = self.param(
             'selection_pressure',
-            nn.initializers.constant(self.config['nca']['selection_pressure']),
+            flax_nn.initializers.constant(self.config['nca']['selection_pressure']),
             (1,)
         )
 
@@ -1266,7 +1266,7 @@ class JAXNCATradingModel(nn.Module):
         risk_prob = self.risk_predictor(pooled)
 
         # Apply softmax to signals
-        signal_probs = nn.softmax(signal_logits, axis=-1)
+        signal_probs = flax_nn.softmax(signal_logits, axis=-1)
 
         return {
             'price_prediction': price_pred.squeeze(),
