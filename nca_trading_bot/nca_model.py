@@ -5,9 +5,31 @@ This module implements the core NCA architecture with JAX for XLA-compiled
 architecture, enabling native TPU support via XLA JIT compilation.
 """
 
+import os
 import logging
 from typing import Dict, List, Optional, Tuple, Union, Any
 import numpy as np
+import tensorflow as tf
+
+# TPU detection before JAX import
+try:
+    tpu = tf.distribute.cluster_resolver.TPUClusterResolver(tpu="local") # TPU detection
+    tf.config.experimental_connect_to_cluster(tpu)
+    tf.tpu.experimental.initialize_tpu_system(tpu)
+    strategy = tf.distribute.TPUStrategy(tpu)
+    print("TPU detected")
+    tpu_available = True
+    # Set JAX to use TPU
+    os.environ['JAX_PLATFORMS'] = 'tpu'
+except ValueError:
+    print("No TPU detected")
+    strategy = tf.distribute.get_strategy()
+    print("Number of devices:", strategy.num_replicas_in_sync, "🚀")
+    tpu_available = False
+    # Set JAX to use CPU
+    os.environ['JAX_PLATFORMS'] = 'cpu'
+
+# Import JAX after setting platform
 import jax
 import jax.numpy as jnp
 from jax import grad, jit, vmap, random
@@ -16,7 +38,6 @@ from jax.scipy.signal import convolve2d
 from functools import partial
 import time
 from collections import deque
-import tensorflow as tf
 
 try:
     tpu = tf.distribute.cluster_resolver.TPUClusterResolver(tpu="local") # TPU detection
@@ -32,21 +53,6 @@ except ValueError:
     tpu_available = False
 
 from config import get_config
-
-# JAX/XLA setup for TPU support - auto-detect platform
-if tpu_available:
-    try:
-        jax.config.update("jax_platform_name", "tpu")
-        # Test TPU initialization by creating a simple array
-        test_array = jnp.array([1.0])
-        print("JAX configured for TPU successfully")
-    except Exception as e:
-        print(f"Failed to configure JAX for TPU: {e}")
-        print("Falling back to CPU")
-        jax.config.update("jax_platform_name", "cpu")
-        tpu_available = False
-else:
-    jax.config.update("jax_platform_name", "cpu")  # Default to CPU
 
 
 class JAXConvGRUCell:
