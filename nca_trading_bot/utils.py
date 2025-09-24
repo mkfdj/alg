@@ -840,7 +840,7 @@ class DataUtils:
 
         # Handle missing values
         numeric_columns = df.select_dtypes(include=[np.number]).columns
-        df[numeric_columns] = df[numeric_columns].fillna(method='ffill').fillna(0)
+        df[numeric_columns] = df[numeric_columns].ffill().fillna(0)
 
         # Remove outliers (optional)
         # df = DataUtils.remove_outliers(df)

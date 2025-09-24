@@ -295,14 +295,16 @@ class DataFetcher:
             # Download dataset
             dataset_path = self.download_kaggle_dataset('jacksoncrow/stock-market-dataset')
 
-            # Load NASDAQ data (assuming it's in symbols_valid_meta.csv or similar)
-            # This is a common structure for such datasets
-            data_files = list(Path(dataset_path).glob("*.csv"))
+            # Load NASDAQ data - search recursively for CSV files
+            data_files = list(Path(dataset_path).rglob("*.csv"))
             if not data_files:
                 raise ValueError("No CSV files found in Kaggle dataset")
 
-            # Load the main data file
-            df = pd.read_csv(data_files[0])
+            # Load the main data file (prefer files with 'stock' or 'market' in name)
+            preferred_files = [f for f in data_files if 'stock' in f.name.lower() or 'market' in f.name.lower()]
+            data_file = preferred_files[0] if preferred_files else data_files[0]
+
+            df = pd.read_csv(data_file)
 
             # Filter for NASDAQ stocks if needed
             if 'Symbol' in df.columns:
@@ -344,12 +346,16 @@ class DataFetcher:
             # Download from Kaggle global dataset
             dataset_path = self.download_kaggle_dataset('pavankrishnanarne/global-stock-market-2008-present')
 
-            # Load global data
-            data_files = list(Path(dataset_path).glob("*.csv"))
+            # Load global data - search recursively for CSV files
+            data_files = list(Path(dataset_path).rglob("*.csv"))
             if not data_files:
                 raise ValueError("No CSV files found in global financial dataset")
 
-            df = pd.read_csv(data_files[0])
+            # Prefer files with 'global' or 'world' in name
+            preferred_files = [f for f in data_files if 'global' in f.name.lower() or 'world' in f.name.lower()]
+            data_file = preferred_files[0] if preferred_files else data_files[0]
+
+            df = pd.read_csv(data_file)
 
             # Convert date column
             if 'Date' in df.columns:
@@ -386,8 +392,8 @@ class DataFetcher:
             # Download dataset
             dataset_path = self.download_kaggle_dataset('borismarjanovic/price-volume-data-for-all-us-stocks-etfs')
 
-            # Load data - this dataset has many CSV files
-            data_files = list(Path(dataset_path).glob("*.csv"))
+            # Load data - this dataset has many CSV files, search recursively
+            data_files = list(Path(dataset_path).rglob("*.csv"))
             if not data_files:
                 raise ValueError("No CSV files found in huge stock dataset")
 
@@ -440,12 +446,16 @@ class DataFetcher:
             # Download dataset
             dataset_path = self.download_kaggle_dataset('camnugent/sandp500')
 
-            # Load data
-            data_files = list(Path(dataset_path).glob("*.csv"))
+            # Load data - search recursively for CSV files
+            data_files = list(Path(dataset_path).rglob("*.csv"))
             if not data_files:
                 raise ValueError("No CSV files found in S&P500 dataset")
 
-            df = pd.read_csv(data_files[0])
+            # Prefer files with 'sp500' or 'sandp' in name
+            preferred_files = [f for f in data_files if 'sp500' in f.name.lower() or 'sandp' in f.name.lower()]
+            data_file = preferred_files[0] if preferred_files else data_files[0]
+
+            df = pd.read_csv(data_file)
 
             # Convert date column
             if 'Date' in df.columns:
@@ -482,12 +492,16 @@ class DataFetcher:
             # Download dataset
             dataset_path = self.download_kaggle_dataset('nelgiriyewithana/world-stock-prices-daily-updating')
 
-            # Load data
-            data_files = list(Path(dataset_path).glob("*.csv"))
+            # Load data - search recursively for CSV files
+            data_files = list(Path(dataset_path).rglob("*.csv"))
             if not data_files:
                 raise ValueError("No CSV files found in world stocks dataset")
 
-            df = pd.read_csv(data_files[0])
+            # Prefer files with 'world' or 'global' in name
+            preferred_files = [f for f in data_files if 'world' in f.name.lower() or 'global' in f.name.lower()]
+            data_file = preferred_files[0] if preferred_files else data_files[0]
+
+            df = pd.read_csv(data_file)
 
             # Convert date column
             if 'Date' in df.columns:
@@ -524,12 +538,16 @@ class DataFetcher:
             # Download dataset
             dataset_path = self.download_kaggle_dataset('mattiuzc/stock-exchange-data')
 
-            # Load data
-            data_files = list(Path(dataset_path).glob("*.csv"))
+            # Load data - search recursively for CSV files
+            data_files = list(Path(dataset_path).rglob("*.csv"))
             if not data_files:
                 raise ValueError("No CSV files found in exchanges dataset")
 
-            df = pd.read_csv(data_files[0])
+            # Prefer files with 'exchange' in name
+            preferred_files = [f for f in data_files if 'exchange' in f.name.lower()]
+            data_file = preferred_files[0] if preferred_files else data_files[0]
+
+            df = pd.read_csv(data_file)
 
             # Convert date column
             if 'Date' in df.columns:
@@ -1178,7 +1196,7 @@ Run: pip install pandas-ta
         df['Volatility'] = df['Price_Change'].rolling(window=20).std()
 
         # Fill NaN values
-        df = df.fillna(method='bfill').fillna(0)
+        df = df.bfill().fillna(0)
 
         self.logger.info(f"Calculated technical indicators for {len(df)} records")
         return df
