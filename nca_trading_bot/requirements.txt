@@ -12,4 +12,4 @@ tensorboard
 PyYAML
 psutil
 pandas-ta
-tensorflow
+tensorflow-cpu

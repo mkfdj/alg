@@ -11,24 +11,13 @@ from typing import Dict, List, Optional, Tuple, Union, Any
 import numpy as np
 import tensorflow as tf
 
-# TPU detection before JAX import
-try:
-    tpu = tf.distribute.cluster_resolver.TPUClusterResolver(tpu="local") # TPU detection
-    tf.config.experimental_connect_to_cluster(tpu)
-    tf.tpu.experimental.initialize_tpu_system(tpu)
-    strategy = tf.distribute.TPUStrategy(tpu)
-    print("TPU detected and initialized successfully")
-    tpu_available = True
-    # Allow JAX to try TPU first, then fallback to CPU
-    os.environ['JAX_PLATFORMS'] = 'tpu,cpu'
-except Exception as e:
-    print(f"TPU initialization failed: {e}")
-    print("Using CPU mode only")
-    strategy = tf.distribute.get_strategy()
-    print("Number of devices:", strategy.num_replicas_in_sync, "🚀")
-    tpu_available = False
-    # Allow JAX to automatically choose available backend (fallback to CPU)
-    os.environ['JAX_PLATFORMS'] = ''
+# TPU detection - using tensorflow-cpu to avoid conflicts with JAX TPU usage
+# Let JAX handle TPU detection and initialization
+strategy = tf.distribute.get_strategy()
+print("Number of devices:", strategy.num_replicas_in_sync, "🚀")
+tpu_available = False  # Will be detected by JAX later
+# Allow JAX to automatically choose available backend (TPU if available, CPU otherwise)
+os.environ['JAX_PLATFORMS'] = ''
 
 # Import JAX after setting platform
 import jax
