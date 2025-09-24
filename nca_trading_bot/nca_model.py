@@ -93,30 +93,33 @@ class JAXConvGRUCell:
         return h_new
 
     def _conv2d(self, x: jnp.ndarray, w: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
-        """JAX-based 2D convolution with same padding."""
-        # Simple convolution implementation (can be optimized for TPU)
-        # In practice, you'd use jax.lax.conv_general_dilated
-        batch_size, channels, height, width = x.shape
-        out_channels = w.shape[0]
+        """JAX-based 2D convolution with same padding using optimized operations."""
+        # Use JAX's optimized convolution
+        # w shape: (out_channels, in_channels, kernel_h, kernel_w)
+        # x shape: (batch, in_channels, height, width)
 
-        # For simplicity, using a basic implementation
-        # In production, replace with optimized conv
-        output = jnp.zeros((batch_size, out_channels, height, width))
+        # Convert to NCHW format for JAX conv
+        x_nchw = jnp.transpose(x, (0, 3, 1, 2))  # (batch, height, width, channels) -> (batch, channels, height, width)
+        w_ochw = jnp.transpose(w, (0, 2, 3, 1))  # (out, in, kh, kw) -> (out, kh, kw, in)
 
-        for b in range(batch_size):
-            for oc in range(out_channels):
-                for ic in range(channels):
-                    # Convolution with same padding
-                    conv_result = convolve2d(
-                        x[b, ic], w[oc, ic],
-                        mode='same', boundary='fill', fillvalue=0
-                    )
-                    output = output.at[b, oc].add(conv_result)
+        # Perform convolution with same padding
+        padding = [(0, 0), (0, 0)] + [(1, 1), (1, 1)]  # No padding for batch/channels, same padding for spatial
+        y = jax.lax.conv_general_dilated(
+            x_nchw, w_ochw,
+            window_strides=(1, 1),
+            padding=padding,
+            lhs_dilation=(1, 1),
+            rhs_dilation=(1, 1),
+            dimension_numbers=jax.lax.ConvDimensionNumbers(
+                lhs_spec=(0, 3, 1, 2),  # (batch, channels, height, width)
+                rhs_spec=(3, 0, 1, 2),  # (out, in, height, width)
+                out_spec=(0, 3, 1, 2)   # (batch, channels, height, width)
+            )
+        )
 
-        # Add bias
-        output = output + b[None, :, None, None]
-
-        return output
+        # Convert back to NHWC and add bias
+        y_nhwc = jnp.transpose(y, (0, 2, 3, 1))  # (batch, height, width, channels)
+        return y_nhwc + b
 
 
 class JAXNCACell:
@@ -203,24 +206,33 @@ class JAXNCACell:
         return new_state, new_hidden
 
     def _conv2d(self, x: jnp.ndarray, w: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
-        """JAX-based 2D convolution."""
-        # Simplified convolution - replace with jax.lax.conv_general_dilated for production
-        batch_size, channels, height, width = x.shape
-        out_channels = w.shape[0]
+        """JAX-based 2D convolution with same padding using optimized operations."""
+        # Use JAX's optimized convolution
+        # w shape: (out_channels, in_channels, kernel_h, kernel_w)
+        # x shape: (batch, in_channels, height, width)
 
-        output = jnp.zeros((batch_size, out_channels, height, width))
+        # Convert to NCHW format for JAX conv
+        x_nchw = jnp.transpose(x, (0, 3, 1, 2))  # (batch, height, width, channels) -> (batch, channels, height, width)
+        w_ochw = jnp.transpose(w, (0, 2, 3, 1))  # (out, in, kh, kw) -> (out, kh, kw, in)
 
-        for b_idx in range(batch_size):
-            for oc in range(out_channels):
-                for ic in range(channels):
-                    conv_result = convolve2d(
-                        x[b_idx, ic], w[oc, ic],
-                        mode='same', boundary='fill', fillvalue=0
-                    )
-                    output = output.at[b_idx, oc].add(conv_result)
+        # Perform convolution with same padding
+        padding = [(0, 0), (0, 0)] + [(1, 1), (1, 1)]  # No padding for batch/channels, same padding for spatial
+        y = jax.lax.conv_general_dilated(
+            x_nchw, w_ochw,
+            window_strides=(1, 1),
+            padding=padding,
+            lhs_dilation=(1, 1),
+            rhs_dilation=(1, 1),
+            dimension_numbers=jax.lax.ConvDimensionNumbers(
+                lhs_spec=(0, 3, 1, 2),  # (batch, channels, height, width)
+                rhs_spec=(3, 0, 1, 2),  # (out, in, height, width)
+                out_spec=(0, 3, 1, 2)   # (batch, channels, height, width)
+            )
+        )
 
-        output = output + b[None, :, None, None]
-        return output
+        # Convert back to NHWC and add bias
+        y_nhwc = jnp.transpose(y, (0, 2, 3, 1))  # (batch, height, width, channels)
+        return y_nhwc + b
 
 
 class AdaptiveGridState:
