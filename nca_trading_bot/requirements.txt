@@ -15,4 +15,5 @@ PyYAML
 psutil
 GPUtil
 kaggle
+kagglehub
 requests

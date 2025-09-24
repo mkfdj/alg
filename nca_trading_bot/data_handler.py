@@ -295,16 +295,31 @@ class DataFetcher:
             # Download dataset
             dataset_path = self.download_kaggle_dataset('jacksoncrow/stock-market-dataset')
 
-            # Load NASDAQ data - search recursively for CSV files
+            # Load NASDAQ data - this is a collection of individual stock CSV files
             data_files = list(Path(dataset_path).rglob("*.csv"))
             if not data_files:
                 raise ValueError("No CSV files found in Kaggle dataset")
 
-            # Load the main data file (prefer files with 'stock' or 'market' in name)
-            preferred_files = [f for f in data_files if 'stock' in f.name.lower() or 'market' in f.name.lower()]
-            data_file = preferred_files[0] if preferred_files else data_files[0]
+            # Load a sample of stock files (limit to avoid memory issues)
+            sample_size = min(50, len(data_files))  # Load up to 50 stocks
+            selected_files = data_files[:sample_size]
 
-            df = pd.read_csv(data_file)
+            dfs = []
+            for file_path in selected_files:
+                try:
+                    df = pd.read_csv(file_path)
+                    if 'Date' in df.columns and len(df) > 100:  # Only include substantial data
+                        df['Symbol'] = file_path.stem  # Add stock symbol from filename
+                        dfs.append(df)
+                except Exception as e:
+                    self.logger.warning(f"Failed to load {file_path}: {e}")
+                    continue
+
+            if dfs:
+                combined_df = pd.concat(dfs, ignore_index=True)
+                df = combined_df
+            else:
+                raise ValueError("No valid stock data files loaded")
 
             # Filter for NASDAQ stocks if needed
             if 'Symbol' in df.columns:
@@ -346,16 +361,27 @@ class DataFetcher:
             # Download from Kaggle global dataset
             dataset_path = self.download_kaggle_dataset('pavankrishnanarne/global-stock-market-2008-present')
 
-            # Load global data - search recursively for CSV files
+            # Load global data - this is a collection of yearly CSV files
             data_files = list(Path(dataset_path).rglob("*.csv"))
             if not data_files:
                 raise ValueError("No CSV files found in global financial dataset")
 
-            # Prefer files with 'global' or 'world' in name
-            preferred_files = [f for f in data_files if 'global' in f.name.lower() or 'world' in f.name.lower()]
-            data_file = preferred_files[0] if preferred_files else data_files[0]
+            # Load all yearly files and combine them
+            dfs = []
+            for file_path in data_files:
+                try:
+                    year_df = pd.read_csv(file_path)
+                    if 'Date' in file_path.name or 'Date' in year_df.columns:
+                        dfs.append(year_df)
+                except Exception as e:
+                    self.logger.warning(f"Failed to load {file_path}: {e}")
+                    continue
 
-            df = pd.read_csv(data_file)
+            if dfs:
+                combined_df = pd.concat(dfs, ignore_index=True)
+                df = combined_df
+            else:
+                raise ValueError("No valid global financial data files loaded")
 
             # Convert date column
             if 'Date' in df.columns:
