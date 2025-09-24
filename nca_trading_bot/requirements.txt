@@ -14,3 +14,4 @@ tensorboard
 PyYAML
 psutil
 pandas-ta
+GPUtil
