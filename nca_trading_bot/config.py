@@ -46,6 +46,17 @@ class DataConfig:
     tickers: List[str] = None  # Will be set to default if None
     timeframes: List[str] = None  # Will be set to default if None
 
+    # New dataset sources
+    use_sp500_yahoo: bool = True  # Fetch S&P500 from Yahoo Finance up to 2021
+    use_kaggle_nasdaq: bool = True  # Use Kaggle NASDAQ dataset
+    use_quantopian_data: bool = False  # Quantopian data (limited availability)
+    use_global_financial_data: bool = True  # Global financial datasets
+    backtest_end_year: int = 2021  # Filter data <= this year for backtesting
+
+    # Kaggle API settings
+    kaggle_username: str = ""
+    kaggle_key: str = ""
+
     # Technical indicators
     rsi_period: int = 14
     macd_fast: int = 12
@@ -63,6 +74,10 @@ class DataConfig:
     # Normalization
     normalize_features: bool = True
     feature_range: Tuple[float, float] = (-1.0, 1.0)
+
+    # Memory management for large datasets
+    max_ram_gb: float = 320.0  # Maximum RAM to use for data loading
+    chunk_size_mb: int = 100  # Chunk size for processing large files
 
 
 @dataclass
@@ -290,6 +305,12 @@ class ConfigManager:
         if poly_key := os.getenv("POLYGON_API_KEY"):
             self.api.polygon_key = poly_key
 
+        # Kaggle API
+        if kaggle_user := os.getenv("KAGGLE_USERNAME"):
+            self.data.kaggle_username = kaggle_user
+        if kaggle_key := os.getenv("KAGGLE_KEY"):
+            self.data.kaggle_key = kaggle_key
+
         # System settings
         if device := os.getenv("NCA_DEVICE"):
             self.system.device = device
@@ -311,6 +332,12 @@ class ConfigManager:
             self.trading.max_position_size = float(max_pos)
         if risk_per_trade := os.getenv("NCA_RISK_PER_TRADE"):
             self.trading.risk_per_trade = float(risk_per_trade)
+
+        # Data parameters
+        if backtest_year := os.getenv("NCA_BACKTEST_END_YEAR"):
+            self.data.backtest_end_year = int(backtest_year)
+        if max_ram := os.getenv("NCA_MAX_RAM_GB"):
+            self.data.max_ram_gb = float(max_ram)
 
     def _update_from_dict(self, config_dict: Dict) -> None:
         """Update configuration from dictionary."""

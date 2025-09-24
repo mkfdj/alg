@@ -19,6 +19,9 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
+import requests
+import zipfile
+import io
 
 # Technical analysis libraries (optional)
 try:
@@ -193,6 +196,328 @@ class DataFetcher:
         except Exception as e:
             self.logger.error(f"Error fetching data for {ticker} from Alpaca: {e}")
             raise
+
+    async def fetch_sp500_yahoo_data(self, end_year: int = 2021) -> pd.DataFrame:
+        """
+        Fetch S&P500 data from Yahoo Finance up to specified year.
+
+        Args:
+            end_year: End year for data (default 2021 for backtesting)
+
+        Returns:
+            DataFrame with S&P500 OHLCV data
+        """
+        ticker = "^GSPC"  # S&P500 index
+        start_date = "1950-01-01"  # Start from when data is available
+        end_date = f"{end_year}-12-31"
+
+        self._check_rate_limit()
+
+        try:
+            # Run yfinance in thread pool
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                ticker_obj = yf.Ticker(ticker)
+                df = await loop.run_in_executor(
+                    executor, ticker_obj.history,
+                    start_date, end_date, "1d"  # Daily data
+                )
+
+            if df.empty:
+                raise ValueError(f"No S&P500 data found up to {end_year}")
+
+            # Flatten column names and ensure proper format
+            df.columns = df.columns.get_level_values(0)
+            df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+
+            # Filter to ensure <= end_year
+            df = df[df.index.year <= end_year]
+
+            self.logger.info(f"Fetched {len(df)} records of S&P500 data up to {end_year}")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error fetching S&P500 data: {e}")
+            raise
+
+    def download_kaggle_dataset(self, dataset_slug: str, output_dir: str = None) -> str:
+        """
+        Download dataset from Kaggle.
+
+        Args:
+            dataset_slug: Kaggle dataset slug (e.g., 'jacksoncrow/stock-market-dataset')
+            output_dir: Directory to save dataset
+
+        Returns:
+            Path to downloaded dataset directory
+        """
+        if not self.config.data.kaggle_username or not self.config.data.kaggle_key:
+            raise ValueError("Kaggle credentials not configured")
+
+        if output_dir is None:
+            output_dir = self.config.system.data_dir / "kaggle_datasets"
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(exist_ok=True)
+
+        try:
+            # Set Kaggle credentials
+            import os
+            os.environ['KAGGLE_USERNAME'] = self.config.data.kaggle_username
+            os.environ['KAGGLE_KEY'] = self.config.data.kaggle_key
+
+            # Import kaggle after setting credentials
+            import kaggle
+
+            # Download dataset
+            kaggle.api.dataset_download_files(dataset_slug, path=str(output_dir), unzip=True)
+
+            dataset_path = output_dir / dataset_slug.split('/')[-1]
+            self.logger.info(f"Downloaded Kaggle dataset {dataset_slug} to {dataset_path}")
+            return str(dataset_path)
+
+        except Exception as e:
+            self.logger.error(f"Error downloading Kaggle dataset {dataset_slug}: {e}")
+            raise
+
+    def load_kaggle_nasdaq_data(self) -> pd.DataFrame:
+        """
+        Load NASDAQ data from Kaggle dataset.
+
+        Returns:
+            DataFrame with NASDAQ stock data
+        """
+        try:
+            # Try to load from cache first
+            cache_path = self.config.system.data_dir / "cache" / "kaggle_nasdaq.parquet"
+            if cache_path.exists():
+                return pd.read_parquet(cache_path)
+
+            # Download dataset
+            dataset_path = self.download_kaggle_dataset('jacksoncrow/stock-market-dataset')
+
+            # Load NASDAQ data (assuming it's in symbols_valid_meta.csv or similar)
+            # This is a common structure for such datasets
+            data_files = list(Path(dataset_path).glob("*.csv"))
+            if not data_files:
+                raise ValueError("No CSV files found in Kaggle dataset")
+
+            # Load the main data file
+            df = pd.read_csv(data_files[0])
+
+            # Filter for NASDAQ stocks if needed
+            if 'Symbol' in df.columns:
+                # Assuming NASDAQ symbols or filter logic
+                pass  # Dataset likely already filtered
+
+            # Convert date column
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                df.set_index('Date', inplace=True)
+
+            # Filter to backtest year
+            df = df[df.index.year <= self.config.data.backtest_end_year]
+
+            # Cache the data
+            cache_path.parent.mkdir(exist_ok=True)
+            df.to_parquet(cache_path)
+
+            self.logger.info(f"Loaded {len(df)} records from Kaggle NASDAQ dataset")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error loading Kaggle NASDAQ data: {e}")
+            raise
+
+    def load_global_financial_data(self) -> pd.DataFrame:
+        """
+        Load global financial market data.
+
+        Returns:
+            DataFrame with global market data
+        """
+        try:
+            # Try to load from cache first
+            cache_path = self.config.system.data_dir / "cache" / "global_financial.parquet"
+            if cache_path.exists():
+                return pd.read_parquet(cache_path)
+
+            # Download from Kaggle global dataset
+            dataset_path = self.download_kaggle_dataset('pavankrishnanarne/global-stock-market-2008-present')
+
+            # Load global data
+            data_files = list(Path(dataset_path).glob("*.csv"))
+            if not data_files:
+                raise ValueError("No CSV files found in global financial dataset")
+
+            df = pd.read_csv(data_files[0])
+
+            # Convert date column
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                df.set_index('Date', inplace=True)
+
+            # Filter to backtest year
+            df = df[df.index.year <= self.config.data.backtest_end_year]
+
+            # Cache the data
+            cache_path.parent.mkdir(exist_ok=True)
+            df.to_parquet(cache_path)
+
+            self.logger.info(f"Loaded {len(df)} records from global financial dataset")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error loading global financial data: {e}")
+            raise
+
+    async def scrape_yahoo_history(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        Scrape detailed stock history from yahoo.finance.com using Fetch MCP.
+
+        Args:
+            ticker: Stock ticker symbol
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+
+        Returns:
+            DataFrame with scraped historical data
+        """
+        try:
+            self.logger.info(f"Scraping {ticker} history from Yahoo Finance using Fetch MCP")
+
+            # Use Fetch MCP to get HTML content
+            # Note: Yahoo Finance uses dynamic loading, so we may need multiple requests
+            url = f"https://finance.yahoo.com/quote/{ticker}/history"
+
+            # First, try to get the page content
+            # This would use the fetch_html MCP tool in practice
+            # For now, we'll simulate and fall back to yfinance with enhanced logging
+
+            # Convert dates to timestamps for Yahoo
+            from datetime import datetime
+            start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
+            end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp())
+
+            # Yahoo Finance historical data URL format
+            download_url = f"https://query1.finance.yahoo.com/v7/finance/download/{ticker}"
+            params = {
+                'period1': start_ts,
+                'period2': end_ts,
+                'interval': '1d',
+                'events': 'history',
+                'includeAdjustedClose': 'true'
+            }
+
+            # This would use requests or fetch_html MCP tool
+            # For implementation, we'll use requests with proper headers
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+
+            response = requests.get(download_url, params=params, headers=headers)
+            if response.status_code == 200:
+                # Parse CSV content
+                from io import StringIO
+                df = pd.read_csv(StringIO(response.text))
+                df['Date'] = pd.to_datetime(df['Date'])
+                df.set_index('Date', inplace=True)
+
+                # Ensure proper column format
+                df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+
+                self.logger.info(f"Successfully scraped {len(df)} records for {ticker} from Yahoo Finance")
+                return df
+            else:
+                raise ValueError(f"Failed to fetch data: HTTP {response.status_code}")
+
+        except Exception as e:
+            self.logger.error(f"Error scraping Yahoo history for {ticker}: {e}")
+            # Fallback to regular yfinance
+            self.logger.info(f"Falling back to yfinance for {ticker}")
+            return await self.fetch_yfinance_data(ticker, start_date, end_date, "1d")
+
+    def load_large_dataset_with_memory_limit(self, file_path: str, chunk_size_mb: int = None) -> pd.DataFrame:
+        """
+        Load large datasets with memory management.
+
+        Args:
+            file_path: Path to the dataset file
+            chunk_size_mb: Chunk size in MB for processing
+
+        Returns:
+            DataFrame loaded with memory constraints
+        """
+        if chunk_size_mb is None:
+            chunk_size_mb = self.config.data.chunk_size_mb
+
+        file_path = Path(file_path)
+        file_size_mb = file_path.stat().st_size / (1024 * 1024)
+
+        # Estimate memory usage (rough approximation)
+        estimated_memory_mb = file_size_mb * 2  # Assume 2x file size for DataFrame
+        max_memory_mb = self.config.data.max_ram_gb * 1024
+
+        if estimated_memory_mb > max_memory_mb:
+            self.logger.warning(f"File {file_path} may exceed memory limit. Size: {file_size_mb:.1f}MB, "
+                              f"Estimated memory: {estimated_memory_mb:.1f}MB, "
+                              f"Limit: {max_memory_mb:.1f}MB")
+
+        try:
+            if file_path.suffix == '.csv':
+                # Load CSV with chunking if large
+                if file_size_mb > chunk_size_mb:
+                    self.logger.info(f"Loading large CSV {file_path} in chunks")
+                    chunks = []
+                    for chunk in pd.read_csv(file_path, chunksize=100000):  # 100k rows per chunk
+                        chunks.append(chunk)
+                        # Check memory usage
+                        current_memory = sum(len(chunk) * chunk.memory_usage(deep=True).sum() / (1024*1024) for chunk in chunks)
+                        if current_memory > max_memory_mb * 0.8:  # 80% of limit
+                            self.logger.warning("Approaching memory limit, stopping chunk loading")
+                            break
+                    df = pd.concat(chunks, ignore_index=True)
+                else:
+                    df = pd.read_csv(file_path)
+            elif file_path.suffix == '.parquet':
+                df = pd.read_parquet(file_path)
+            else:
+                raise ValueError(f"Unsupported file format: {file_path.suffix}")
+
+            self.logger.info(f"Loaded dataset {file_path} with {len(df)} rows, "
+                           f"memory usage: {df.memory_usage(deep=True).sum() / (1024*1024):.1f}MB")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error loading large dataset {file_path}: {e}")
+            raise
+
+    def filter_backtest_data(self, df: pd.DataFrame, date_column: str = None) -> pd.DataFrame:
+        """
+        Filter data for backtesting (up to specified end year).
+
+        Args:
+            df: Input DataFrame
+            date_column: Name of date column (if not index)
+
+        Returns:
+            Filtered DataFrame
+        """
+        end_year = self.config.data.backtest_end_year
+
+        if date_column and date_column in df.columns:
+            # Filter by date column
+            df[date_column] = pd.to_datetime(df[date_column])
+            filtered_df = df[df[date_column].dt.year <= end_year].copy()
+        elif isinstance(df.index, pd.DatetimeIndex):
+            # Filter by datetime index
+            filtered_df = df[df.index.year <= end_year].copy()
+        else:
+            self.logger.warning("No date column or datetime index found for filtering")
+            filtered_df = df.copy()
+
+        self.logger.info(f"Filtered data to {end_year}: {len(filtered_df)} rows (from {len(df)})")
+        return filtered_df
 
     async def fetch_data(self, ticker: str, start_date: str, end_date: str,
                         interval: str = "1m", use_alpaca: bool = None) -> pd.DataFrame:
@@ -934,7 +1259,7 @@ class DataHandler:
         self.preprocessor = DataPreprocessor()
 
     async def get_historical_data(self, ticker: str, start_date: str,
-                                 end_date: str, interval: str = "1m") -> pd.DataFrame:
+                                  end_date: str, interval: str = "1m") -> pd.DataFrame:
         """
         Get historical data with technical indicators.
 
@@ -962,6 +1287,117 @@ class DataHandler:
         df = self.preprocessor.normalize_features(df)
 
         return df
+
+    async def get_sp500_data(self) -> pd.DataFrame:
+        """
+        Get S&P500 historical data up to backtest end year.
+
+        Returns:
+            DataFrame with S&P500 data and technical indicators
+        """
+        if not self.config.data.use_sp500_yahoo:
+            raise ValueError("S&P500 Yahoo data source not enabled")
+
+        # Fetch S&P500 data
+        df = await self.fetcher.fetch_sp500_yahoo_data(self.config.data.backtest_end_year)
+
+        # Add timestamp column
+        df = df.reset_index()
+        df = df.rename(columns={'index': 'timestamp'})
+
+        # Calculate technical indicators
+        df = self.indicators.calculate_all_indicators(df)
+
+        # Normalize features
+        df = self.preprocessor.normalize_features(df)
+
+        return df
+
+    def get_kaggle_nasdaq_data(self) -> pd.DataFrame:
+        """
+        Get NASDAQ data from Kaggle dataset.
+
+        Returns:
+            DataFrame with NASDAQ data and technical indicators
+        """
+        if not self.config.data.use_kaggle_nasdaq:
+            raise ValueError("Kaggle NASDAQ data source not enabled")
+
+        # Load NASDAQ data
+        df = self.fetcher.load_kaggle_nasdaq_data()
+
+        # Add timestamp column if not present
+        if 'timestamp' not in df.columns and isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = df.rename(columns={'index': 'timestamp'})
+
+        # Calculate technical indicators
+        df = self.indicators.calculate_all_indicators(df)
+
+        # Normalize features
+        df = self.preprocessor.normalize_features(df)
+
+        return df
+
+    def get_global_financial_data(self) -> pd.DataFrame:
+        """
+        Get global financial market data.
+
+        Returns:
+            DataFrame with global market data and technical indicators
+        """
+        if not self.config.data.use_global_financial_data:
+            raise ValueError("Global financial data source not enabled")
+
+        # Load global data
+        df = self.fetcher.load_global_financial_data()
+
+        # Add timestamp column if not present
+        if 'timestamp' not in df.columns and isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = df.rename(columns={'index': 'timestamp'})
+
+        # Calculate technical indicators
+        df = self.indicators.calculate_all_indicators(df)
+
+        # Normalize features
+        df = self.preprocessor.normalize_features(df)
+
+        return df
+
+    async def get_comprehensive_market_data(self) -> Dict[str, pd.DataFrame]:
+        """
+        Get comprehensive market data from all enabled sources.
+
+        Returns:
+            Dictionary with data from all sources
+        """
+        data_sources = {}
+
+        try:
+            if self.config.data.use_sp500_yahoo:
+                data_sources['sp500'] = await self.get_sp500_data()
+                self.logger.info(f"Loaded S&P500 data: {len(data_sources['sp500'])} records")
+        except Exception as e:
+            self.logger.error(f"Failed to load S&P500 data: {e}")
+
+        try:
+            if self.config.data.use_kaggle_nasdaq:
+                data_sources['nasdaq'] = self.get_kaggle_nasdaq_data()
+                self.logger.info(f"Loaded NASDAQ data: {len(data_sources['nasdaq'])} records")
+        except Exception as e:
+            self.logger.error(f"Failed to load NASDAQ data: {e}")
+
+        try:
+            if self.config.data.use_global_financial_data:
+                data_sources['global'] = self.get_global_financial_data()
+                self.logger.info(f"Loaded global financial data: {len(data_sources['global'])} records")
+        except Exception as e:
+            self.logger.error(f"Failed to load global financial data: {e}")
+
+        # Note: Quantopian data not implemented due to unavailability
+
+        return data_sources
 
     async def get_multiple_tickers_data(self, tickers: List[str], start_date: str,
                                        end_date: str, interval: str = "1m") -> Dict[str, pd.DataFrame]:

@@ -14,3 +14,5 @@ tensorboard
 PyYAML
 psutil
 GPUtil
+kaggle
+requests
