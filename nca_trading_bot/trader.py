@@ -19,7 +19,7 @@ from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.stream import Stream
+# from alpaca.stream import Stream  # Not available in current alpaca-py version
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor

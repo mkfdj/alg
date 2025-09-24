@@ -13,7 +13,7 @@ def test_imports():
         from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
         from alpaca.trading.requests import MarketOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
-        from alpaca.stream import Stream
+        # from alpaca.stream import Stream  # Not available in current version
         print("✓ Alpaca-py imports successful")
 
         # Test gymnasium
