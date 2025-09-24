@@ -315,8 +315,8 @@ class JAXAdaptiveNCA:
 
     def _setup_jit_functions(self):
         """Setup JIT-compiled functions for performance."""
-        # JIT compile the evolve_grid function
-        self.evolve_grid_jit = jit(self._evolve_grid_impl)
+        # JIT compile the evolve_grid function with static steps
+        self.evolve_grid_jit = {}
 
         # Other JIT functions
         self._predict_jit = jit(self._predict_impl)
@@ -324,7 +324,7 @@ class JAXAdaptiveNCA:
 
     def _evolve_grid_impl(self, initial_state: jnp.ndarray, steps: int) -> jnp.ndarray:
         """
-        JIT-compiled grid evolution implementation.
+        Grid evolution implementation.
 
         Args:
             initial_state: Initial state tensor
@@ -336,13 +336,10 @@ class JAXAdaptiveNCA:
         current_state = initial_state
         hidden = jnp.zeros_like(current_state)
 
-        def evolve_step(carry, _):
-            state, hidden = carry
-            new_state, new_hidden = self.nca_layers[0](state, hidden)
-            return (new_state, new_hidden), None
+        for _ in range(steps):
+            current_state, hidden = self.nca_layers[0](current_state, hidden)
 
-        (final_state, _), _ = jax.lax.scan(evolve_step, (current_state, hidden), jnp.arange(steps))
-        return final_state
+        return current_state
 
     def evolve_grid(self, initial_state: jnp.ndarray, steps: Optional[int] = None) -> jnp.ndarray:
         """
@@ -359,10 +356,10 @@ class JAXAdaptiveNCA:
             steps = self._determine_evolution_steps()
 
         # Ensure steps are within bounds
-        steps = jnp.clip(steps, self.min_evolution_steps, self.max_evolution_steps)
+        steps = int(jnp.clip(steps, self.min_evolution_steps, self.max_evolution_steps))
 
-        # Use JIT-compiled evolution
-        evolved_state = self.evolve_grid_jit(initial_state, steps)
+        # Evolve the grid
+        evolved_state = self._evolve_grid_impl(initial_state, steps)
 
         # Update history
         self.grid_state.update_history(evolved_state)
