@@ -220,7 +220,7 @@ class DataFetcher:
                 ticker_obj = yf.Ticker(ticker)
                 df = await loop.run_in_executor(
                     executor, ticker_obj.history,
-                    start_date, end_date, "1d"  # Daily data
+                    start=start_date, end=end_date, interval="1d"
                 )
 
             if df.empty:
@@ -369,6 +369,186 @@ class DataFetcher:
 
         except Exception as e:
             self.logger.error(f"Error loading global financial data: {e}")
+            raise
+
+    def load_kaggle_huge_stock_data(self) -> pd.DataFrame:
+        """
+        Load huge US stock market dataset from Kaggle.
+
+        Returns:
+            DataFrame with comprehensive US stock data
+        """
+        try:
+            # Try to load from cache first
+            cache_path = self.config.system.data_dir / "cache" / "kaggle_huge_stock.parquet"
+            if cache_path.exists():
+                return pd.read_parquet(cache_path)
+
+            # Download dataset
+            dataset_path = self.download_kaggle_dataset('borismarjanovic/price-volume-data-for-all-us-stocks-etfs')
+
+            # Load data - this dataset has many CSV files
+            data_files = list(Path(dataset_path).glob("*.csv"))
+            if not data_files:
+                raise ValueError("No CSV files found in huge stock dataset")
+
+            # Load a sample of files to avoid memory issues
+            dfs = []
+            max_files = min(10, len(data_files))  # Limit to 10 files initially
+
+            for file_path in data_files[:max_files]:
+                try:
+                    df = pd.read_csv(file_path)
+                    if 'Date' in df.columns:
+                        df['Date'] = pd.to_datetime(df['Date'])
+                        df.set_index('Date', inplace=True)
+                        dfs.append(df)
+                except Exception as e:
+                    self.logger.warning(f"Failed to load {file_path}: {e}")
+                    continue
+
+            if dfs:
+                combined_df = pd.concat(dfs, ignore_index=False)
+                # Filter to backtest year
+                combined_df = combined_df[combined_df.index.year <= self.config.data.backtest_end_year]
+
+                # Cache the data
+                cache_path.parent.mkdir(exist_ok=True)
+                combined_df.to_parquet(cache_path)
+
+                self.logger.info(f"Loaded huge stock data: {len(combined_df)} records from {len(dfs)} files")
+                return combined_df
+            else:
+                raise ValueError("No valid data files loaded")
+
+        except Exception as e:
+            self.logger.error(f"Error loading Kaggle huge stock data: {e}")
+            raise
+
+    def load_kaggle_sp500_data(self) -> pd.DataFrame:
+        """
+        Load S&P500 stock data from Kaggle.
+
+        Returns:
+            DataFrame with S&P500 stock data
+        """
+        try:
+            # Try to load from cache first
+            cache_path = self.config.system.data_dir / "cache" / "kaggle_sp500.parquet"
+            if cache_path.exists():
+                return pd.read_parquet(cache_path)
+
+            # Download dataset
+            dataset_path = self.download_kaggle_dataset('camnugent/sandp500')
+
+            # Load data
+            data_files = list(Path(dataset_path).glob("*.csv"))
+            if not data_files:
+                raise ValueError("No CSV files found in S&P500 dataset")
+
+            df = pd.read_csv(data_files[0])
+
+            # Convert date column
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                df.set_index('Date', inplace=True)
+
+            # Filter to backtest year
+            df = df[df.index.year <= self.config.data.backtest_end_year]
+
+            # Cache the data
+            cache_path.parent.mkdir(exist_ok=True)
+            df.to_parquet(cache_path)
+
+            self.logger.info(f"Loaded S&P500 data: {len(df)} records")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error loading Kaggle S&P500 data: {e}")
+            raise
+
+    def load_kaggle_world_stocks_data(self) -> pd.DataFrame:
+        """
+        Load world stock prices from Kaggle.
+
+        Returns:
+            DataFrame with world stock data
+        """
+        try:
+            # Try to load from cache first
+            cache_path = self.config.system.data_dir / "cache" / "kaggle_world_stocks.parquet"
+            if cache_path.exists():
+                return pd.read_parquet(cache_path)
+
+            # Download dataset
+            dataset_path = self.download_kaggle_dataset('nelgiriyewithana/world-stock-prices-daily-updating')
+
+            # Load data
+            data_files = list(Path(dataset_path).glob("*.csv"))
+            if not data_files:
+                raise ValueError("No CSV files found in world stocks dataset")
+
+            df = pd.read_csv(data_files[0])
+
+            # Convert date column
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                df.set_index('Date', inplace=True)
+
+            # Filter to backtest year
+            df = df[df.index.year <= self.config.data.backtest_end_year]
+
+            # Cache the data
+            cache_path.parent.mkdir(exist_ok=True)
+            df.to_parquet(cache_path)
+
+            self.logger.info(f"Loaded world stocks data: {len(df)} records")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error loading Kaggle world stocks data: {e}")
+            raise
+
+    def load_kaggle_exchanges_data(self) -> pd.DataFrame:
+        """
+        Load stock exchange data from Kaggle.
+
+        Returns:
+            DataFrame with stock exchange data
+        """
+        try:
+            # Try to load from cache first
+            cache_path = self.config.system.data_dir / "cache" / "kaggle_exchanges.parquet"
+            if cache_path.exists():
+                return pd.read_parquet(cache_path)
+
+            # Download dataset
+            dataset_path = self.download_kaggle_dataset('mattiuzc/stock-exchange-data')
+
+            # Load data
+            data_files = list(Path(dataset_path).glob("*.csv"))
+            if not data_files:
+                raise ValueError("No CSV files found in exchanges dataset")
+
+            df = pd.read_csv(data_files[0])
+
+            # Convert date column
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                df.set_index('Date', inplace=True)
+
+            # Filter to backtest year
+            df = df[df.index.year <= self.config.data.backtest_end_year]
+
+            # Cache the data
+            cache_path.parent.mkdir(exist_ok=True)
+            df.to_parquet(cache_path)
+
+            self.logger.info(f"Loaded exchanges data: {len(df)} records")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error loading Kaggle exchanges data: {e}")
             raise
 
     async def scrape_yahoo_history(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -1395,9 +1575,141 @@ class DataHandler:
         except Exception as e:
             self.logger.error(f"Failed to load global financial data: {e}")
 
+        try:
+            if self.config.data.use_kaggle_huge_stock:
+                data_sources['huge_stock'] = self.get_kaggle_huge_stock_data()
+                self.logger.info(f"Loaded huge stock data: {len(data_sources['huge_stock'])} records")
+        except Exception as e:
+            self.logger.error(f"Failed to load huge stock data: {e}")
+
+        try:
+            if self.config.data.use_kaggle_sp500:
+                data_sources['kaggle_sp500'] = self.get_kaggle_sp500_data()
+                self.logger.info(f"Loaded Kaggle S&P500 data: {len(data_sources['kaggle_sp500'])} records")
+        except Exception as e:
+            self.logger.error(f"Failed to load Kaggle S&P500 data: {e}")
+
+        try:
+            if self.config.data.use_kaggle_world_stocks:
+                data_sources['world_stocks'] = self.get_kaggle_world_stocks_data()
+                self.logger.info(f"Loaded world stocks data: {len(data_sources['world_stocks'])} records")
+        except Exception as e:
+            self.logger.error(f"Failed to load world stocks data: {e}")
+
+        try:
+            if self.config.data.use_kaggle_exchanges:
+                data_sources['exchanges'] = self.get_kaggle_exchanges_data()
+                self.logger.info(f"Loaded exchanges data: {len(data_sources['exchanges'])} records")
+        except Exception as e:
+            self.logger.error(f"Failed to load exchanges data: {e}")
+
         # Note: Quantopian data not implemented due to unavailability
 
         return data_sources
+
+    def get_kaggle_huge_stock_data(self) -> pd.DataFrame:
+        """
+        Get huge US stock market data from Kaggle.
+
+        Returns:
+            DataFrame with comprehensive US stock data
+        """
+        if not self.config.data.use_kaggle_huge_stock:
+            raise ValueError("Kaggle huge stock data source not enabled")
+
+        # Load data
+        df = self.fetcher.load_kaggle_huge_stock_data()
+
+        # Add timestamp column if not present
+        if 'timestamp' not in df.columns and isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = df.rename(columns={'index': 'timestamp'})
+
+        # Calculate technical indicators
+        df = self.indicators.calculate_all_indicators(df)
+
+        # Normalize features
+        df = self.preprocessor.normalize_features(df)
+
+        return df
+
+    def get_kaggle_sp500_data(self) -> pd.DataFrame:
+        """
+        Get S&P500 stock data from Kaggle.
+
+        Returns:
+            DataFrame with S&P500 stock data
+        """
+        if not self.config.data.use_kaggle_sp500:
+            raise ValueError("Kaggle S&P500 data source not enabled")
+
+        # Load data
+        df = self.fetcher.load_kaggle_sp500_data()
+
+        # Add timestamp column if not present
+        if 'timestamp' not in df.columns and isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = df.rename(columns={'index': 'timestamp'})
+
+        # Calculate technical indicators
+        df = self.indicators.calculate_all_indicators(df)
+
+        # Normalize features
+        df = self.preprocessor.normalize_features(df)
+
+        return df
+
+    def get_kaggle_world_stocks_data(self) -> pd.DataFrame:
+        """
+        Get world stock prices from Kaggle.
+
+        Returns:
+            DataFrame with world stock data
+        """
+        if not self.config.data.use_kaggle_world_stocks:
+            raise ValueError("Kaggle world stocks data source not enabled")
+
+        # Load data
+        df = self.fetcher.load_kaggle_world_stocks_data()
+
+        # Add timestamp column if not present
+        if 'timestamp' not in df.columns and isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = df.rename(columns={'index': 'timestamp'})
+
+        # Calculate technical indicators
+        df = self.indicators.calculate_all_indicators(df)
+
+        # Normalize features
+        df = self.preprocessor.normalize_features(df)
+
+        return df
+
+    def get_kaggle_exchanges_data(self) -> pd.DataFrame:
+        """
+        Get stock exchange data from Kaggle.
+
+        Returns:
+            DataFrame with stock exchange data
+        """
+        if not self.config.data.use_kaggle_exchanges:
+            raise ValueError("Kaggle exchanges data source not enabled")
+
+        # Load data
+        df = self.fetcher.load_kaggle_exchanges_data()
+
+        # Add timestamp column if not present
+        if 'timestamp' not in df.columns and isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = df.rename(columns={'index': 'timestamp'})
+
+        # Calculate technical indicators
+        df = self.indicators.calculate_all_indicators(df)
+
+        # Normalize features
+        df = self.preprocessor.normalize_features(df)
+
+        return df
 
     async def get_multiple_tickers_data(self, tickers: List[str], start_date: str,
                                        end_date: str, interval: str = "1m") -> Dict[str, pd.DataFrame]:

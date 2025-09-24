@@ -49,6 +49,10 @@ class DataConfig:
     # New dataset sources
     use_sp500_yahoo: bool = True  # Fetch S&P500 from Yahoo Finance up to 2021
     use_kaggle_nasdaq: bool = True  # Use Kaggle NASDAQ dataset
+    use_kaggle_huge_stock: bool = True  # Huge US stock market dataset
+    use_kaggle_sp500: bool = True  # S&P500 stock data
+    use_kaggle_world_stocks: bool = True  # World stock prices
+    use_kaggle_exchanges: bool = True  # Stock exchange data
     use_quantopian_data: bool = False  # Quantopian data (limited availability)
     use_global_financial_data: bool = True  # Global financial datasets
     backtest_end_year: int = 2021  # Filter data <= this year for backtesting
