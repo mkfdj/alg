@@ -148,9 +148,11 @@ class JAXNCACell:
         self.gamma = random.normal(key_gamma, ()) * 0.1  # Decay rate
 
         # Convolutional weights - JAX uses (out_channels, in_channels, kernel_h, kernel_w)
-        self.w_conv1 = random.normal(key_conv1, (hidden_dim, state_dim, kernel_size, kernel_size)) * 0.1
+        # conv1 takes concatenated [x, h] so in_channels = state_dim + hidden_dim
+        self.w_conv1 = random.normal(key_conv1, (hidden_dim, state_dim + hidden_dim, kernel_size, kernel_size)) * 0.1
         self.b_conv1 = jnp.zeros((hidden_dim,))
 
+        # conv2 takes hidden_out so in_channels = hidden_dim
         self.w_conv2 = random.normal(key_conv2, (state_dim, hidden_dim, kernel_size, kernel_size)) * 0.1
         self.b_conv2 = jnp.zeros((state_dim,))
 
