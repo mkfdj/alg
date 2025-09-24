@@ -24,10 +24,12 @@ try:
     tf.tpu.experimental.initialize_tpu_system(tpu)
     strategy = tf.distribute.TPUStrategy(tpu)
     print("TPU detected")
+    tpu_available = True
 except ValueError:
     print("No TPU detected")
     strategy = tf.distribute.get_strategy()
     print("Number of devices:", strategy.num_replicas_in_sync, "🚀")
+    tpu_available = False
 
 from config import get_config
 
