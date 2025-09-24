@@ -4,6 +4,8 @@ torch
 torch-xla
 jax
 jaxlib
+flax
+optax
 yfinance
 alpaca-trade-api
 gymnasium
@@ -12,4 +14,3 @@ tensorboard
 PyYAML
 psutil
 pandas-ta
-tensorflow-cpu

@@ -245,7 +245,7 @@ def test_tpu_optimizations():
         for key in outputs1.keys():
             if isinstance(outputs1[key], torch.Tensor) and isinstance(outputs2[key], torch.Tensor):
                 diff = torch.abs(outputs1[key] - outputs2[key]).mean()
-                print(f"  {key} difference: {diff".6f"}")
+                print(f"  {key} difference: {diff:.6f}")
 
         print("✅ TPU optimizations working correctly")
         return True
