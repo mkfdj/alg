@@ -219,8 +219,7 @@ class DataFetcher:
             with ThreadPoolExecutor() as executor:
                 ticker_obj = yf.Ticker(ticker)
                 df = await loop.run_in_executor(
-                    executor, ticker_obj.history,
-                    start=start_date, end=end_date, interval="1d"
+                    executor, lambda: ticker_obj.history(start=start_date, end=end_date, interval="1d")
                 )
 
             if df.empty:
