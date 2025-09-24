@@ -19,14 +19,14 @@ try:
     strategy = tf.distribute.TPUStrategy(tpu)
     print("TPU detected")
     tpu_available = True
-    # Set JAX to use TPU
-    os.environ['JAX_PLATFORMS'] = 'tpu'
+    # Let JAX auto-detect available platforms
+    os.environ['JAX_PLATFORMS'] = ''
 except ValueError:
     print("No TPU detected")
     strategy = tf.distribute.get_strategy()
     print("Number of devices:", strategy.num_replicas_in_sync, "🚀")
     tpu_available = False
-    # Set JAX to use CPU
+    # Force JAX to use CPU only
     os.environ['JAX_PLATFORMS'] = 'cpu'
 
 # Import JAX after setting platform
