@@ -27,8 +27,8 @@ except Exception as e:
     strategy = tf.distribute.get_strategy()
     print("Number of devices:", strategy.num_replicas_in_sync, "🚀")
     tpu_available = False
-    # Force JAX to use CPU only
-    os.environ['JAX_PLATFORMS'] = 'cpu'
+    # Allow JAX to automatically choose available backend (fallback to CPU)
+    os.environ['JAX_PLATFORMS'] = ''
 
 # Import JAX after setting platform
 import jax
