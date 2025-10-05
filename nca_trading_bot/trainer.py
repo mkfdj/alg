@@ -5,7 +5,6 @@ This module provides advanced RL training capabilities with:
 - JAX/Flax PPO implementation for policy optimization
 - Real-time adaptation on streams with online learning
 - Adaptive NCA growth triggered by Sharpe ratio monitoring
-- Brave Search MCP integration for market intelligence
 - Continuous learning and performance-based adaptation
 
 Based on research papers:
@@ -64,7 +63,7 @@ from pathlib import Path
 import pickle
 
 from config import get_config
-from nca_model import NCATradingModel, NCATrainer, NCAModelCache
+from nca_model import NCATradingModel, NCAModelCache
 from trader import TradingEnvironment, TradingAgent
 from data_handler import DataHandler
 from utils import RiskCalculator, PerformanceMonitor, LoggerUtils
@@ -76,14 +75,6 @@ from adaptivity import (
     create_performance_metrics,
     AdaptiveNCAWrapper
 )
-
-# MCP tool import (assumed available)
-try:
-    from mcp_tools import use_mcp_tool
-except ImportError:
-    # Fallback for MCP integration
-    async def use_mcp_tool(*args, **kwargs):
-        raise NotImplementedError("MCP tools not available")
 
 
 class PPOTrainer:
@@ -156,7 +147,6 @@ class PPOTrainer:
 
         # Enhanced features for real-time adaptation
         self.jax_ppo_trainer = None  # JAX PPO trainer for online learning
-        self.market_intelligence = MarketIntelligence(config)
         self.risk_calculator = RiskCalculator(config)
         self.performance_history = []
         self.sharpe_threshold = 0.5
@@ -216,22 +206,6 @@ class PPOTrainer:
         except Exception as e:
             self.logger.warning(f"Failed to initialize adaptive components in trainer: {e}")
 
-    async def get_market_intelligence(self, symbol: str, context: str = "trading_decision") -> Dict[str, Any]:
-        """
-        Get market intelligence for trading decisions.
-
-        Args:
-            symbol: Stock symbol
-            context: Decision context
-
-        Returns:
-            Market intelligence data
-        """
-        if self.jax_ppo_trainer:
-            return await self.jax_ppo_trainer.get_market_intelligence(symbol, context)
-        else:
-            return await self.market_intelligence.query_market_data(symbol, context)
-
     def update_performance_and_adapt(self, returns: List[float]):
         """
         Update performance metrics and trigger adaptations.
@@ -290,13 +264,12 @@ class PPOTrainer:
         if self.jax_ppo_trainer:
             self.jax_ppo_trainer.store_transition(obs, action, log_prob, value, reward, done)
 
-    def get_adaptive_action(self, observation: np.ndarray, symbol: str = None) -> Tuple[int, Dict[str, Any]]:
+    def get_adaptive_action(self, observation: np.ndarray) -> Tuple[int, Dict[str, Any]]:
         """
-        Get action with market intelligence integration.
+        Get action with adaptive model integration.
 
         Args:
             observation: Current observation
-            symbol: Stock symbol for market intelligence
 
         Returns:
             Tuple of (action, metadata)
@@ -314,20 +287,10 @@ class PPOTrainer:
                 log_prob = torch.log(action_probs[0, action]).item()
                 value = outputs['price_prediction'].squeeze().item()
 
-        # Get market intelligence if symbol provided
-        metadata = {}
-        if symbol:
-            try:
-                # This would be async in real implementation
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                intelligence = loop.run_until_complete(
-                    self.get_market_intelligence(symbol, "trading_decision")
-                )
-                metadata['market_intelligence'] = intelligence
-            except Exception as e:
-                self.logger.warning(f"Failed to get market intelligence: {e}")
+        metadata = {
+            'log_prob': log_prob,
+            'value': value
+        }
 
         return action, metadata
 
@@ -1070,7 +1033,7 @@ class RealTimeStreamingTrainer:
     """
     Real-time streaming trainer with JAX PPO and adaptive NCA growth.
 
-    Provides continuous learning on streaming data with market intelligence integration,
+    Provides continuous learning on streaming data with pure numerical stock prediction,
     based on research papers for quantitative trading and autonomous agents.
     """
 
@@ -1093,7 +1056,6 @@ class RealTimeStreamingTrainer:
 
         # Streaming components
         self.data_handler = DataHandler()
-        self.market_intelligence = MarketIntelligence(config)
         self.risk_calculator = RiskCalculator(config)
 
         # Real-time adaptation parameters
@@ -1106,9 +1068,6 @@ class RealTimeStreamingTrainer:
         self.performance_history = []
         self.streaming_data = []
         self.is_streaming = False
-
-        # MCP integration for market intelligence
-        self.brave_search_available = True  # Assume available
 
     def initialize_jax_ppo(self, observation_dim: int, action_dim: int):
         """
@@ -1163,8 +1122,8 @@ class RealTimeStreamingTrainer:
                 batch_data = await self._collect_streaming_batch(symbols)
 
                 if batch_data and self.jax_ppo:
-                    # Process batch with market intelligence
-                    enriched_data = await self._enrich_with_market_intelligence(batch_data)
+                    # Process batch with numerical features
+                    enriched_data = await self._enrich_with_numerical_features(batch_data)
 
                     # Online learning update
                     self._online_learning_update(enriched_data)
@@ -1212,9 +1171,9 @@ class RealTimeStreamingTrainer:
             self.logger.warning(f"Failed to collect streaming batch: {e}")
             return None
 
-    async def _enrich_with_market_intelligence(self, batch_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _enrich_with_numerical_features(self, batch_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Enrich batch data with market intelligence from Brave Search.
+        Enrich batch data with numerical features.
 
         Args:
             batch_data: Raw batch data
@@ -1225,27 +1184,57 @@ class RealTimeStreamingTrainer:
         enriched_batch = batch_data.copy()
 
         try:
-            # Get market intelligence for each symbol in batch
-            intelligence_tasks = []
+            # Get numerical features for each symbol in batch
+            feature_tasks = []
 
             for item in batch_data.get('batch', []):
                 symbol = item['symbol']
-                intelligence_tasks.append(
-                    self.market_intelligence.query_market_data(symbol, "streaming_training")
+                feature_tasks.append(
+                    self._extract_numerical_features(symbol, item['data'])
                 )
 
-            # Gather intelligence data
-            intelligence_results = await asyncio.gather(*intelligence_tasks, return_exceptions=True)
+            # Gather feature data
+            feature_results = await asyncio.gather(*feature_tasks, return_exceptions=True)
 
-            # Add intelligence to batch items
+            # Add features to batch items
             for i, item in enumerate(enriched_batch.get('batch', [])):
-                if i < len(intelligence_results) and not isinstance(intelligence_results[i], Exception):
-                    item['market_intelligence'] = intelligence_results[i]
+                if i < len(feature_results) and not isinstance(feature_results[i], Exception):
+                    item['numerical_features'] = feature_results[i]
 
         except Exception as e:
-            self.logger.warning(f"Failed to enrich with market intelligence: {e}")
+            self.logger.warning(f"Failed to enrich with numerical features: {e}")
 
         return enriched_batch
+
+    async def _extract_numerical_features(self, symbol: str, data: Any) -> Dict[str, Any]:
+        """
+        Extract numerical features from streaming data.
+
+        Args:
+            symbol: Stock symbol
+            data: Streaming data
+
+        Returns:
+            Numerical features dictionary
+        """
+        try:
+            # Extract technical indicators and numerical features
+            features = {
+                'symbol': symbol,
+                'price_change': 0.0,
+                'volume_change': 0.0,
+                'volatility': 0.0,
+                'momentum': 0.0,
+                'trend': 0.0
+            }
+
+            # In a real implementation, this would calculate actual technical indicators
+            # For now, return mock features
+            return features
+
+        except Exception as e:
+            self.logger.error(f"Failed to extract numerical features: {e}")
+            return {}
 
     def _online_learning_update(self, enriched_data: Dict[str, Any]):
         """
@@ -1297,7 +1286,7 @@ class RealTimeStreamingTrainer:
         Returns:
             Reward value
         """
-        # This would calculate reward based on market conditions and intelligence
+        # This would calculate reward based on market conditions and numerical features
         # For now, return a mock reward
         return np.random.normal(0, 0.1)
 
@@ -1330,13 +1319,12 @@ class RealTimeStreamingTrainer:
         except Exception as e:
             self.logger.error(f"Failed performance check: {e}")
 
-    def get_streaming_action(self, observation: np.ndarray, symbol: str = None) -> Tuple[int, Dict[str, Any]]:
+    def get_streaming_action(self, observation: np.ndarray) -> Tuple[int, Dict[str, Any]]:
         """
-        Get action for streaming data with market intelligence.
+        Get action for streaming data.
 
         Args:
             observation: Current observation
-            symbol: Stock symbol
 
         Returns:
             Tuple of (action, metadata)
@@ -1352,20 +1340,6 @@ class RealTimeStreamingTrainer:
             'value': value,
             'streaming_mode': True
         }
-
-        # Add market intelligence if symbol provided
-        if symbol:
-            try:
-                # This would be async in real implementation
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                intelligence = loop.run_until_complete(
-                    self.market_intelligence.query_market_data(symbol, "streaming_decision")
-                )
-                metadata['market_intelligence'] = intelligence
-            except Exception as e:
-                self.logger.warning(f"Failed to get streaming market intelligence: {e}")
 
         return action, metadata
 
@@ -1761,13 +1735,12 @@ class TrainingManager:
         # Start streaming training
         await self.streaming_trainer.start_streaming_training(symbols)
 
-    def get_streaming_action(self, observation: np.ndarray, symbol: str = None) -> Tuple[int, Dict[str, Any]]:
+    def get_streaming_action(self, observation: np.ndarray) -> Tuple[int, Dict[str, Any]]:
         """
-        Get action from streaming trainer with market intelligence.
+        Get action from streaming trainer.
 
         Args:
             observation: Current observation
-            symbol: Stock symbol
 
         Returns:
             Tuple of (action, metadata)
@@ -1775,27 +1748,7 @@ class TrainingManager:
         if not self.streaming_trainer:
             raise ValueError("Streaming trainer not initialized")
 
-        return self.streaming_trainer.get_streaming_action(observation, symbol)
-
-    async def get_market_intelligence(self, symbol: str, context: str = "trading_decision") -> Dict[str, Any]:
-        """
-        Get market intelligence for trading decisions.
-
-        Args:
-            symbol: Stock symbol
-            context: Decision context
-
-        Returns:
-            Market intelligence data
-        """
-        if self.streaming_trainer:
-            return await self.streaming_trainer.market_intelligence.query_market_data(symbol, context)
-        elif self.trainer:
-            return await self.trainer.get_market_intelligence(symbol, context)
-        else:
-            # Fallback to basic market intelligence
-            market_intel = MarketIntelligence(self.config)
-            return await market_intel.query_market_data(symbol, context)
+        return self.streaming_trainer.get_streaming_action(observation)
 
     def load_model(self, model_path: str) -> NCATradingModel:
         """
@@ -1975,191 +1928,6 @@ class TrainingManager:
             }
 
         return summary
-
-
-class MarketIntelligence:
-    """
-    Market intelligence gathering using Brave Search MCP.
-
-    Integrates real-time market news and stock information for trading decisions.
-    """
-
-    def __init__(self, config):
-        """Initialize market intelligence."""
-        self.config = config
-        self.logger = logging.getLogger(__name__)
-
-    async def query_market_data(self, symbol: str, context: str = "trading_decision") -> Dict[str, Any]:
-        """
-        Query market data using Brave Search MCP.
-
-        Args:
-            symbol: Stock symbol
-            context: Query context
-
-        Returns:
-            Market intelligence data
-        """
-        try:
-            # Construct query based on context
-            if context == "trading_decision":
-                query = f"{symbol} stock latest news market sentiment technical analysis"
-            elif context == "streaming_training":
-                query = f"{symbol} real-time market data price action volatility"
-            elif context == "streaming_decision":
-                query = f"{symbol} current market conditions breaking news"
-            else:
-                query = f"{symbol} stock analysis {context}"
-
-            # Use MCP brave_web_search tool
-            search_results = await self._perform_brave_search(query)
-
-            # Process results into intelligence data
-            intelligence = self._process_search_results(symbol, search_results, context)
-            intelligence['timestamp'] = datetime.now()
-
-            return intelligence
-
-        except Exception as e:
-            self.logger.error(f"Failed to get market intelligence: {e}")
-            # Return fallback mock data
-            return {
-                'symbol': symbol,
-                'news_sentiment': 'neutral',
-                'market_trend': 'sideways',
-                'volatility': 'medium',
-                'key_news': [],
-                'technical_signals': {},
-                'timestamp': datetime.now(),
-                'error': str(e)
-            }
-
-    async def _perform_brave_search(self, query: str) -> Dict[str, Any]:
-        """
-        Perform Brave search using MCP tool.
-
-        Args:
-            query: Search query
-
-        Returns:
-            Search results
-        """
-        try:
-            # Use MCP brave_search tool
-            # This assumes the MCP server is connected and available
-            search_results = await use_mcp_tool(
-                server_name="brave-search",
-                tool_name="brave_web_search",
-                arguments={
-                    "query": query,
-                    "count": 10,  # Get top 10 results
-                    "offset": 0
-                }
-            )
-            return search_results
-        except Exception as e:
-            self.logger.warning(f"MCP Brave search failed: {e}, using fallback")
-            # Fallback to mock results
-            return {
-                'results': [
-                    {
-                        'title': f'{query} - Market Analysis',
-                        'description': f'Latest analysis for {query}',
-                        'url': f'https://example.com/{query.replace(" ", "_")}'
-                    }
-                ]
-            }
-
-    def _process_search_results(self, symbol: str, search_results: Dict[str, Any], context: str) -> Dict[str, Any]:
-        """
-        Process search results into market intelligence.
-
-        Args:
-            symbol: Stock symbol
-            search_results: Raw search results
-            context: Query context
-
-        Returns:
-            Processed intelligence data
-        """
-        # Extract key information from search results
-        results = search_results.get('results', [])
-
-        # Analyze sentiment from titles and descriptions
-        sentiment_scores = []
-        volatility_indicators = []
-        key_news = []
-
-        for result in results[:5]:  # Process top 5 results
-            title = result.get('title', '').lower()
-            description = result.get('description', '').lower()
-
-            # Simple sentiment analysis
-            positive_words = ['bullish', 'gains', 'up', 'rise', 'growth', 'positive']
-            negative_words = ['bearish', 'losses', 'down', 'fall', 'decline', 'negative']
-
-            pos_score = sum(1 for word in positive_words if word in title or word in description)
-            neg_score = sum(1 for word in negative_words if word in title or word in description)
-
-            sentiment_scores.append(pos_score - neg_score)
-
-            # Volatility indicators
-            if any(word in title + description for word in ['volatile', 'volatility', 'swing', 'fluctuation']):
-                volatility_indicators.append('high')
-            elif any(word in title + description for word in ['stable', 'steady', 'calm']):
-                volatility_indicators.append('low')
-            else:
-                volatility_indicators.append('medium')
-
-            # Extract key news
-            if len(key_news) < 3:  # Keep top 3 news items
-                key_news.append({
-                    'title': result.get('title', ''),
-                    'summary': result.get('description', '')[:200] + '...',
-                    'url': result.get('url', '')
-                })
-
-        # Determine overall sentiment
-        avg_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0
-        if avg_sentiment > 0.5:
-            news_sentiment = 'positive'
-        elif avg_sentiment < -0.5:
-            news_sentiment = 'negative'
-        else:
-            news_sentiment = 'neutral'
-
-        # Determine market trend (simplified)
-        if 'up' in str(results).lower() and 'trend' in str(results).lower():
-            market_trend = 'up'
-        elif 'down' in str(results).lower() and 'trend' in str(results).lower():
-            market_trend = 'down'
-        else:
-            market_trend = 'sideways'
-
-        # Determine volatility
-        volatility_counts = {'low': 0, 'medium': 0, 'high': 0}
-        for vol in volatility_indicators:
-            volatility_counts[vol] += 1
-
-        volatility = max(volatility_counts, key=volatility_counts.get)
-
-        # Generate technical signals (simplified)
-        technical_signals = {
-            'momentum': 'neutral',
-            'volume': 'normal',
-            'support_resistance': 'testing'
-        }
-
-        return {
-            'symbol': symbol,
-            'news_sentiment': news_sentiment,
-            'market_trend': market_trend,
-            'volatility': volatility,
-            'key_news': key_news,
-            'technical_signals': technical_signals,
-            'sentiment_score': float(avg_sentiment),
-            'search_results_count': len(results)
-        }
 
 
 # Utility functions
