@@ -133,11 +133,11 @@ class PPOTrainer:
 
         # Learning rate scheduler
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.5, patience=10, verbose=True
+            self.optimizer, mode='min', factor=0.5, patience=10, verbose=False
         )
 
         # AMP setup - support both CUDA and TPU
-        self.use_amp = config.training.use_amp and (torch.cuda.is_available() or self.device.type == 'xla')
+        self.use_amp = config.training.use_mixed_precision and (torch.cuda.is_available() or self.device.type == 'xla')
         self.scaler = GradScaler() if self.use_amp and torch.cuda.is_available() else None
 
         # Loss functions

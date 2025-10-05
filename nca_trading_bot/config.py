@@ -461,7 +461,7 @@ class ConfigManager:
             "training": {
                 "batch_size": self.training.batch_size,
                 "num_gpus": self.training.num_gpus,
-                "use_amp": self.training.use_amp
+                "use_mixed_precision": self.training.use_mixed_precision
             },
             "system": {
                 "device": self.system.device,
@@ -473,7 +473,7 @@ class ConfigManager:
                 "tpu_chips": self.tpu.tpu_chips,
                 "xla_compile": self.tpu.xla_compile,
                 "sharding_strategy": self.tpu.sharding_strategy,
-                "bf16_precision": self.tpu.bf16_precision
+                "bf16_precision": self.tpu.mixed_precision
             }
         }
 
