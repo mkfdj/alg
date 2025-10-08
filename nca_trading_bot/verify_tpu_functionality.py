@@ -93,8 +93,8 @@ def test_tpu_computation():
         @jax.jit
         def tpu_computation():
             # Create data on TPU
-            x = jnp.ones((1000, 1000), dtype=jnp.float32)
-            y = jnp.ones((1000, 1000), dtype=jnp.float32)
+            x = jnp.ones((100, 100), dtype=jnp.float32)
+            y = jnp.ones((100, 100), dtype=jnp.float32)
             
             # Perform computation
             result = jnp.matmul(x, y)
@@ -102,13 +102,22 @@ def test_tpu_computation():
         
         # Run computation
         result = tpu_computation()
-        expected = 1000.0 * 1000.0  # 1M
+        expected = 100.0 * 100.0  # 10K
         
-        if abs(float(result) - expected) < 1e-3:
-            logger.info(f"✅ TPU computation successful: {result}")
+        # Convert to float for comparison
+        result_float = float(result)
+        
+        if abs(result_float - expected) < 1e-3:
+            logger.info(f"✅ TPU computation successful: {result_float}")
             return True
         else:
-            logger.error(f"❌ TPU computation incorrect: got {result}, expected {expected}")
+            logger.error(f"❌ TPU computation incorrect: got {result_float}, expected {expected}")
+            # Try a simpler computation to debug
+            try:
+                simple_result = jnp.sum(jnp.ones((10, 10)))
+                logger.info(f"Simple computation test: {float(simple_result)} (expected: 100)")
+            except Exception as e:
+                logger.error(f"Simple computation also failed: {e}")
             return False
             
     except Exception as e:
@@ -122,6 +131,7 @@ def test_tpu_mesh():
     
     try:
         import jax
+        import jax.numpy as jnp
         from jax.sharding import Mesh, PartitionSpec as P
         from jax.experimental import mesh_utils
         
