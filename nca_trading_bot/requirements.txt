@@ -25,3 +25,4 @@ dm-haiku
 jmp  # Mixed precision library for JAX
 chex  # Testing and debugging utilities for JAX
 wandb
+pytest

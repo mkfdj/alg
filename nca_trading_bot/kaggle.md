@@ -254,3 +254,203 @@ def prepare_submission(predictions, test_data):
 - [Kaggle API Documentation](https://www.kaggle.com/docs/api)
 - [Kaggle Datasets](https://www.kaggle.com/datasets)
 - [Kaggle Competitions](https://www.kaggle.com/competitions)
+
+## TPU v5e-8 Integration for Kaggle
+
+The NCA Trading Bot supports TPU v5e-8 (8 cores) using JAX for high-performance training in Kaggle.
+
+### Setting up TPU in Kaggle
+
+1. **Select TPU v5e-8 in Kaggle Notebook**:
+   - In your Kaggle notebook, go to Settings > Accelerator
+   - Select "TPU v5e-8" (8 cores, 40GB memory)
+
+2. **Install JAX for TPU**:
+```bash
+pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install flax optax
+```
+
+3. **Run TPU Tests**:
+```bash
+cd nca_trading_bot
+python kaggle_tpu_test_runner.py
+```
+
+### TPU Initialization
+
+The `kaggle_tpu_initializer.py` module handles proper TPU initialization:
+
+```python
+from kaggle_tpu_initializer import initialize_tpu_for_kaggle
+
+# Initialize TPU v5e-8
+results = initialize_tpu_for_kaggle()
+
+if results['initialization_success']:
+    print("✅ TPU initialization successful!")
+    print(f"Device info: {results['device_info']}")
+else:
+    print(f"❌ TPU initialization failed: {results['error']}")
+```
+
+### TPU Configuration
+
+Configure TPU settings in your configuration:
+
+```python
+from config import ConfigManager
+
+config = ConfigManager()
+
+# TPU v5e-8 specific settings
+config.tpu.tpu_cores = 8
+config.tpu.tpu_topology = "2x4"
+config.tpu.use_jax = True
+config.tpu.jax_backend = "tpu"
+
+# Mixed precision for TPU efficiency
+config.tpu.mixed_precision = True
+config.tpu.precision_dtype = "bf16"
+config.tpu.compute_dtype = "f32"
+
+# Large batch training
+config.tpu.batch_size = 2048
+config.tpu.micro_batch_size = 256
+config.tpu.gradient_accumulation_steps = 8
+
+# Memory management (35GB out of 40GB available)
+config.tpu.max_memory_gb = 35.0
+config.tpu.memory_fraction = 0.875
+
+# Sharding configuration
+config.tpu.enable_sharding = True
+config.tpu.sharding_strategy = "2d"
+config.tpu.mesh_shape = (1, 8)
+config.tpu.axis_names = ("data", "model")
+```
+
+### JAX TPU Training
+
+Train the NCA model on TPU v5e-8:
+
+```python
+import jax
+from nca_model import create_jax_nca_model, create_jax_train_state
+from trainer import JAXPPOTrainer
+
+# Initialize TPU
+from kaggle_tpu_initializer import initialize_tpu_for_kaggle
+initialize_tpu_for_kaggle()
+
+# Create JAX model
+config = get_config()
+model = create_jax_nca_model(config)
+
+# Setup sharding for TPU v5e-8
+rng = jax.random.PRNGKey(42)
+state, mesh = create_jax_train_state(model, config.__dict__, rng)
+
+# Create trainer
+trainer = JAXPPOTrainer(observation_dim=60, action_dim=3, config=config)
+
+# Train on TPU
+trainer.train(state, mesh)
+```
+
+### TPU Testing
+
+Run comprehensive TPU tests:
+
+```bash
+# Run all TPU tests
+python kaggle_tpu_test_runner.py
+
+# Run individual test components
+python -m unittest tests.test_tpu_integration
+python -m unittest tests.test_jax_nca_model
+```
+
+### TPU Performance Optimization
+
+1. **Large Batch Training**: Use batch sizes of 1024+ for TPU efficiency
+2. **Mixed Precision**: Use bfloat16 for computations, float32 for gradients
+3. **Sharding**: Distribute data and model across 8 TPU cores
+4. **Memory Management**: Limit memory usage to 35GB for stability
+5. **XLA Compilation**: Enable XLA compilation for performance
+
+### TPU Troubleshooting
+
+#### Common TPU Issues
+
+1. **"Device or resource busy" Error**:
+   - Use the provided `kaggle_tpu_initializer.py` module
+   - Ensure proper JAX environment variables are set
+   - Restart the Kaggle notebook if needed
+
+2. **TPU Not Detected**:
+   - Verify TPU v5e-8 is selected in notebook settings
+   - Check JAX installation: `pip install jax[tpu]`
+   - Run TPU detection tests
+
+3. **Memory Issues**:
+   - Reduce batch size
+   - Enable gradient checkpointing
+   - Use mixed precision (bfloat16)
+
+4. **Compilation Errors**:
+   - Clear JAX cache: `rm -rf /tmp/jax_cache`
+   - Restart the notebook
+   - Check XLA flags configuration
+
+#### Debug TPU Issues
+
+Enable detailed logging for TPU debugging:
+
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+# Enable JAX logging
+os.environ["JAX_LOG_COMPILES"] = "1"
+os.environ["XLA_FLAGS"] = "--xla_dump_to=/tmp/xla_dumps"
+```
+
+### TPU Memory Management
+
+Monitor and optimize TPU memory usage:
+
+```python
+import jax
+
+# Check memory usage
+devices = jax.devices()
+for device in devices:
+    print(f"Device: {device}")
+    if hasattr(device, 'memory_stats'):
+        stats = device.memory_stats()
+        print(f"  Memory: {stats}")
+
+# Memory-efficient training
+config.tpu.enable_memory_optimization = True
+config.tpu.enable_remat = True
+```
+
+### TPU Performance Monitoring
+
+Monitor TPU performance during training:
+
+```python
+from utils import PerformanceMonitor
+
+monitor = PerformanceMonitor()
+
+# Get TPU metrics
+tpu_metrics = monitor.get_tpu_training_metrics()
+print(f"TPU Metrics: {tpu_metrics}")
+
+# Enable XLA profiling
+config.tpu.profiling_enabled = True
+```
+
+This TPU integration provides significant performance improvements for training the NCA Trading Bot on Kaggle's TPU v5e-8 infrastructure.
