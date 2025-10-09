@@ -79,9 +79,19 @@ def run_tpu_tests():
     
     # Step 3: Run TPU-specific tests
     try:
-        # Import test modules
-        from tests.test_tpu_integration import TestTPUDetection, TestTPUConfiguration
-        from tests.test_tpu_integration import TestXLACompilation, TestTPUOptimizations
+        # Set up Python path for relative imports
+        import sys
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        
+        # Add parent directory to path if not already there
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        
+        # Now import the test modules
+        from nca_trading_bot.tests.test_tpu_integration import TestTPUDetection, TestTPUConfiguration
+        from nca_trading_bot.tests.test_tpu_integration import TestXLACompilation, TestTPUOptimizations
         
         # Create test suite
         loader = unittest.TestLoader()
@@ -124,14 +134,22 @@ def run_tpu_tests():
 def run_basic_functionality_tests():
     """Run basic functionality tests that don't require TPU."""
     
-    import sys  # Ensure sys is available in this scope
-    
     logger.info("Running basic functionality tests...")
     
     try:
+        # Set up Python path for relative imports
+        import sys
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        
+        # Add parent directory to path if not already there
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        
         # Import basic test modules
-        from tests.test_config import TestConfigManager
-        from tests.test_adaptivity import TestAdaptiveNCA
+        from nca_trading_bot.tests.test_config import TestConfigManager
+        from nca_trading_bot.tests.test_adaptivity import TestAdaptiveNCA
         
         # Create test suite
         loader = unittest.TestLoader()
@@ -170,8 +188,18 @@ def run_jax_model_tests():
             logger.warning("JAX NCA model not found, skipping JAX model tests")
             return True
         
+        # Set up Python path for relative imports
+        import sys
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        
+        # Add parent directory to path if not already there
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        
         # Import JAX model test
-        from tests.test_jax_nca_model import TestJAXNCAModel
+        from nca_trading_bot.tests.test_jax_nca_model import TestJAXNCAModel
         
         # Create test suite
         loader = unittest.TestLoader()
