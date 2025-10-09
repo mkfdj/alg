@@ -89,20 +89,20 @@ def test_tpu_computation():
         
         logger.info(f"Found {len(tpu_devices)} TPU devices")
         
-        # Test computation on TPU
+        # Test computation on TPU with explicit device placement
         @jax.jit
-        def tpu_computation():
-            # Create data on TPU
-            x = jnp.ones((100, 100), dtype=jnp.float32)
-            y = jnp.ones((100, 100), dtype=jnp.float32)
-            
+        def tpu_computation(x, y):
             # Perform computation
             result = jnp.matmul(x, y)
             return jnp.sum(result)
         
+        # Create data explicitly with different sizes to avoid caching
+        x = jnp.ones((50, 50), dtype=jnp.float32)  # Changed to 50x50
+        y = jnp.ones((50, 50), dtype=jnp.float32)
+        
         # Run computation
-        result = tpu_computation()
-        expected = 100.0 * 100.0  # 10K
+        result = tpu_computation(x, y)
+        expected = 50.0 * 50.0  # 2500
         
         # Convert to float for comparison
         result_float = float(result)
@@ -151,13 +151,19 @@ def test_tpu_mesh():
             mesh = Mesh(device_mesh, axis_names=('data',))
             logger.info(f"✅ Created {len(devices)}x1 mesh")
         
-        # Test sharding
+        # Test sharding with simpler approach
         data = jnp.ones((100, 10))
-        data_sharding = P('data', None)
         
-        with mesh:
-            sharded_data = jax.device_put(data, data_sharding)
-            logger.info("✅ Data sharding successful")
+        # Create proper sharding from PartitionSpec
+        from jax.sharding import NamedSharding
+        
+        # Use a simpler sharding that works
+        data_sharding = P('data')
+        named_sharding = NamedSharding(mesh, data_sharding)
+        
+        # Put data on first device to test sharding
+        sharded_data = jax.device_put(data, named_sharding)
+        logger.info("✅ Data sharding successful")
         
         return True
         
