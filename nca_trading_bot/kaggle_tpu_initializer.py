@@ -46,7 +46,8 @@ def initialize_jax_for_tpu(
     os.environ["JAX_XLA_BACKEND"] = "tpu"
     
     # Configure XLA for TPU v5e-8 with minimal valid flags
-    os.environ["XLA_FLAGS"] = f"--xla_tpu_memory_fraction=0.8"
+    # Remove the problematic flag that's not recognized
+    os.environ["XLA_FLAGS"] = ""
     
     # Configure JAX compilation cache
     os.environ["JAX_CACHE_DIR"] = "/tmp/jax_cache"
@@ -185,7 +186,9 @@ def configure_jax_memory_for_tpu(max_memory_gb: float = 35.0) -> bool:
         os.environ["JAX_PLATFORMS"] = "tpu"
         
         # Configure XLA memory with simplified approach
-        os.environ["XLA_FLAGS"] = f"--xla_tpu_memory_fraction={memory_fraction}"
+        # Use JAX environment variable instead of XLA flag
+        os.environ["JAX_PLATFORMS"] = "tpu"
+        os.environ["XLA_FLAGS"] = ""
         
         # Pre-allocate some memory to avoid fragmentation
         logger.info(f"Configured JAX to use {max_memory_gb}GB ({memory_fraction:.1%}) of TPU memory")

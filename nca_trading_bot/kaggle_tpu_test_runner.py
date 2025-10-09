@@ -124,6 +124,8 @@ def run_tpu_tests():
 def run_basic_functionality_tests():
     """Run basic functionality tests that don't require TPU."""
     
+    import sys  # Ensure sys is available in this scope
+    
     logger.info("Running basic functionality tests...")
     
     try:
