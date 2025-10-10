@@ -101,7 +101,7 @@ class Config:
     # === Alpaca API Configuration ===
     alpaca_paper_api_key: Optional[str] = None
     alpaca_paper_secret_key: Optional[str] = None
-    alpaca_paper_base_url: str = "https://paper-api.alpaca.markets"
+    alpaca_paper_base_url: str = "https://paper-api.alpaca.markets/v2"
     alpaca_live_api_key: Optional[str] = None
     alpaca_live_secret_key: Optional[str] = None
     alpaca_live_base_url: str = "https://api.alpaca.markets"

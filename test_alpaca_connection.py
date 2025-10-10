@@ -15,7 +15,7 @@ def test_alpaca_connection():
 
     # Your paper trading API key (single key for paper accounts)
     PAPER_API_KEY = "PKJ346E2YWMT7HCFZX09"
-    BASE_URL = "https://paper-api.alpaca.markets"
+    BASE_URL = "https://paper-api.alpaca.markets/v2"
 
     print("🔧 Testing Alpaca API Connection")
     print("=" * 50)
@@ -29,8 +29,7 @@ def test_alpaca_connection():
         trading_client = TradingClient(
             api_key=PAPER_API_KEY,
             secret_key=PAPER_API_KEY,  # Paper trading uses same key
-            paper=True,
-            url_override=BASE_URL
+            paper=True
         )
 
         account = trading_client.get_account()

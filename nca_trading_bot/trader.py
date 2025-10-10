@@ -13,7 +13,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 import gymnasium as gym
 from gymnasium import spaces
-import alpaca_trade_api as tradeapi
+from alpaca.trading.client import TradingClient
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -483,10 +483,10 @@ class AlpacaTrader:
 
         # Initialize Alpaca API
         api_config = config.get_alpaca_config(paper_mode)
-        self.api = tradeapi.REST(
-            key_id=api_config['key_id'],
+        self.api = TradingClient(
+            api_key=api_config['key_id'],
             secret_key=api_config['secret_key'],
-            base_url=api_config['base_url']
+            paper=paper_mode
         )
 
         # Check account status
