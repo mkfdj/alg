@@ -51,7 +51,7 @@ class AlpacaV2Tester:
                 print(f"❌ Failed to install {package}: {e}")
                 
     def validate_credentials(self):
-        """Validate credential format"""
+        """Comprehensive credential validation and troubleshooting"""
         print("\n🔍 Validating credentials...")
         
         if not self.api_key or not self.secret_key:
@@ -64,21 +64,137 @@ class AlpacaV2Tester:
         print(f"✅ Secret Key: {self.secret_key[:8]}...{self.secret_key[-8:]}")
         
         # Validate format
+        issues = []
         if len(self.api_key) != 20:
-            print("⚠️  API Key should be 20 characters long")
+            issues.append(f"API Key length: {len(self.api_key)} (should be 20)")
         if len(self.secret_key) != 40:
-            print("⚠️  Secret Key should be 40 characters long")
+            issues.append(f"Secret Key length: {len(self.secret_key)} (should be 40)")
+            
+        # Check for common issues
+        if not self.api_key.startswith('PK'):
+            issues.append("API Key should start with 'PK'")
+            
+        if any(char in self.api_key for char in [' ', '\n', '\t']):
+            issues.append("API Key contains whitespace")
+            
+        if any(char in self.secret_key for char in [' ', '\n', '\t']):
+            issues.append("Secret Key contains whitespace")
+            
+        if issues:
+            print("⚠️  Credential Issues Detected:")
+            for issue in issues:
+                print(f"   - {issue}")
+            print("\n🔧 Common Solutions:")
+            print("   1. Copy keys directly from Alpaca dashboard")
+            print("   2. Check for extra spaces or line breaks")
+            print("   3. Ensure you're using TRADING API keys (not App API)")
+            print("   4. Generate new keys if needed")
+        else:
+            print("✅ Credential format looks correct")
             
         return True
         
+    def diagnose_auth_failure(self):
+        """Provide detailed troubleshooting for authentication failures"""
+        print("\n🩺 AUTHENTICATION FAILURE DIAGNOSIS")
+        print("=" * 50)
+        
+        print("📋 Most Common Causes of 401 Unauthorized:")
+        print("1. Using App API keys instead of Trading API keys")
+        print("   → Solution: Go to https://app.alpaca.markets/ → API Keys → Trading API tab")
+        print("   → Generate new keys under 'Trading API' section")
+        
+        print("\n2. Paper account was reset, invalidating keys")
+        print("   → Solution: Generate new keys after account reset")
+        
+        print("\n3. Account not approved for trading")
+        print("   → Solution: Check account status in dashboard")
+        
+        print("\n4. Using live keys for paper trading (or vice versa)")
+        print("   → Solution: Ensure keys match the endpoint being used")
+        
+        print("\n5. Keys copied incorrectly with extra characters")
+        print("   → Solution: Copy keys carefully, check for spaces/newlines")
+        
+        print("\n6. Rate limiting or temporary server issues")
+        print("   → Solution: Wait a few minutes and try again")
+        
+        print("\n🔍 Key Verification Steps:")
+        print("1. Log into https://app.alpaca.markets/")
+        print("2. Navigate to 'API Keys' section")
+        print("3. Verify you're on 'Trading API' tab (NOT 'App API')")
+        print("4. Check if your current keys are listed and active")
+        print("5. If not listed, generate new Trading API keys")
+        print("6. Copy the EXACT keys (no extra spaces)")
+        
+        print(f"\n🔧 Your Current Keys Analysis:")
+        print(f"   API Key Format: {'✅ Valid' if len(self.api_key) == 20 and self.api_key.startswith('PK') else '❌ Invalid'}")
+        print(f"   Secret Key Format: {'✅ Valid' if len(self.secret_key) == 40 else '❌ Invalid'}")
+        
+        # Test key character validation
+        api_clean = ''.join(c for c in self.api_key if c.isalnum())
+        secret_clean = ''.join(c for c in self.secret_key if c.isalnum())
+        
+        if len(api_clean) != len(self.api_key):
+            print(f"   ⚠️  API Key contains non-alphanumeric characters")
+        if len(secret_clean) != len(self.secret_key):
+            print(f"   ⚠️  Secret Key contains non-alphanumeric characters")
+            
+        # Test for App API vs Trading API
+        self._test_app_api_endpoint()
+        
+    def _test_app_api_endpoint(self):
+        """Test if these are App API keys by trying App API endpoint"""
+        print(f"\n🔍 Testing if these are App API keys instead of Trading API...")
+        
+        # Try the Apps API endpoint which uses different authentication
+        try:
+            headers = {
+                'APCA-API-KEY-ID': self.api_key,
+                'APCA-API-SECRET-KEY': self.secret_key,
+                'Content-Type': 'application/json'
+            }
+            
+            # App API uses different endpoints
+            app_urls = [
+                "https://broker-api.alpaca.markets/v1/accounts",
+                "https://broker-api.alpaca.markets/v1/journals",
+            ]
+            
+            for url in app_urls:
+                try:
+                    response = requests.get(url, headers=headers, timeout=10)
+                    if response.status_code == 200:
+                        print(f"   🎯 FOUND THE ISSUE! These are App API keys, not Trading API keys!")
+                        print(f"   ✅ App API endpoint works: {url}")
+                        print(f"\n   🔧 SOLUTION:")
+                        print(f"   1. Go to https://app.alpaca.markets/")
+                        print(f"   2. Click on 'API Keys' section")
+                        print(f"   3. Switch to 'Trading API' tab (you're currently using App API)")
+                        print(f"   4. Generate new Trading API keys")
+                        print(f"   5. Replace your current keys with the Trading API keys")
+                        return True
+                    elif response.status_code != 404:  # 404 is expected if not app keys
+                        print(f"   App API test: {response.status_code} for {url}")
+                except:
+                    continue
+                    
+            print(f"   ❌ App API endpoints also failed - keys may be invalid")
+            
+        except Exception as e:
+            print(f"   ❌ App API test failed: {e}")
+            
+        return False
+        
     def test_direct_http(self, use_paper=True):
-        """Test direct HTTP requests to Alpaca v2 API"""
+        """Test direct HTTP requests to Alpaca v2 API with multiple authentication methods"""
         base_url = self.paper_base_url if use_paper else self.live_base_url
         env_type = "Paper" if use_paper else "Live"
         
         print(f"\n📡 Testing {env_type} API via Direct HTTP...")
         print(f"   Endpoint: {base_url}/account")
         
+        # Method 1: Standard headers (most common)
         headers = {
             'APCA-API-KEY-ID': self.api_key,
             'APCA-API-SECRET-KEY': self.secret_key,
@@ -86,33 +202,72 @@ class AlpacaV2Tester:
             'User-Agent': 'AlpacaV2-Kaggle-Test/1.0'
         }
         
-        try:
-            response = requests.get(
-                f"{base_url}/account",
-                headers=headers,
-                timeout=30
-            )
+        print(f"   Method 1: Standard headers...")
+        success = self._test_http_request(f"{base_url}/account", headers, env_type)
+        if success:
+            return True
             
-            print(f"   Status: {response.status_code}")
+        # Method 2: Try with Basic Auth (some users report this works)
+        print(f"   Method 2: Basic Authentication...")
+        import base64
+        auth_string = f"{self.api_key}:{self.secret_key}"
+        auth_bytes = auth_string.encode('ascii')
+        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+        
+        headers_basic = {
+            'Authorization': f'Basic {auth_b64}',
+            'Content-Type': 'application/json',
+            'User-Agent': 'AlpacaV2-Kaggle-Test/1.0'
+        }
+        
+        success = self._test_http_request(f"{base_url}/account", headers_basic, env_type)
+        if success:
+            return True
+            
+        # Method 3: Try without Content-Type header (sometimes helps)
+        print(f"   Method 3: Minimal headers...")
+        headers_minimal = {
+            'APCA-API-KEY-ID': self.api_key,
+            'APCA-API-SECRET-KEY': self.secret_key
+        }
+        
+        success = self._test_http_request(f"{base_url}/account", headers_minimal, env_type)
+        if success:
+            return True
+            
+        # Method 4: Try older v1 endpoint (fallback)
+        if use_paper:
+            print(f"   Method 4: Trying v1 endpoint...")
+            v1_url = "https://paper-api.alpaca.markets/v1/account"
+            success = self._test_http_request(v1_url, headers, env_type)
+            if success:
+                return True
+            
+        return False
+        
+    def _test_http_request(self, url, headers, env_type):
+        """Helper method to test HTTP request"""
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 account_data = response.json()
-                print(f"✅ {env_type} API SUCCESS!")
+                print(f"   ✅ {env_type} API SUCCESS!")
                 self._print_account_info(account_data)
                 return True
             elif response.status_code == 401:
-                print(f"❌ Authentication failed")
+                print(f"   ❌ 401 Unauthorized")
                 try:
                     error_data = response.json()
-                    print(f"   Error: {error_data.get('message', 'Unauthorized')}")
+                    print(f"     Error: {error_data.get('message', 'Unauthorized')}")
                 except:
-                    print(f"   Response: {response.text}")
+                    print(f"     Response: {response.text[:100]}")
             else:
-                print(f"❌ HTTP {response.status_code}")
-                print(f"   Response: {response.text[:200]}")
+                print(f"   ❌ HTTP {response.status_code}")
+                print(f"     Response: {response.text[:100]}")
                 
         except requests.exceptions.RequestException as e:
-            print(f"❌ Network error: {e}")
+            print(f"   ❌ Network error: {e}")
             
         return False
         
@@ -304,11 +459,7 @@ class AlpacaV2Tester:
                 print("- Add 'ALPACA_SECRET_KEY' secret")
         else:
             print("\n❌ All tests failed!")
-            print("\n🔧 Troubleshooting:")
-            print("1. Verify credentials at https://app.alpaca.markets/")
-            print("2. Ensure you're using 'Trading API' keys (not 'App API')")
-            print("3. Check if your account needs approval")
-            print("4. Try generating new API keys")
+            self.diagnose_auth_failure()
             
         return success_count > 0
 

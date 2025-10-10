@@ -12,24 +12,19 @@
      - `ALPACA_API_KEY` = your API key
      - `ALPACA_SECRET_KEY` = your secret key
 
-3. **Run the test in Kaggle:**
-   ```python
-   import os
-   
-   # Method 1: Using Kaggle secrets (recommended)
-   os.environ['ALPACA_API_KEY'] = 'your_api_key_here'
-   os.environ['ALPACA_SECRET_KEY'] = 'your_secret_key_here'
-   
-   exec(open('alpaca_v2_unified_test.py').read())
-   ```
+3. **Super Simple Method - Upload `kaggle_test_example.py`:**
+   - Just replace the API keys in the example file and run it!
+   - Everything is pre-configured for you
 
-4. **Or run with direct credentials:**
+4. **Or run manually in Kaggle:**
    ```python
+   # Replace with your actual keys
+   exec(open('alpaca_v2_unified_test.py').read())
    from alpaca_v2_unified_test import AlpacaV2Tester
    
    tester = AlpacaV2Tester(
-       api_key="PKJ346E2YWMT7HCFZX09",
-       secret_key="Pge5ic8eDN0ze0YTpEJxNmpdf3YGUnhOVnWJZbf7"
+       api_key="YOUR_ACTUAL_API_KEY", 
+       secret_key="YOUR_ACTUAL_SECRET_KEY"
    )
    tester.run_comprehensive_test()
    ```
