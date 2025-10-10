@@ -254,9 +254,10 @@ class DataHandler:
         df['macd_histogram'] = ta.trend.MACD(df['close']).macd_diff()
 
         # Volatility indicators
-        df['bollinger_hband'] = ta.volatility.BollingerBands(df['close']).bollinger_hband()
-        df['bollinger_lband'] = ta.volatility.BollingerBands(df['close']).bollinger_lband()
-        df['bollinger_mband'] = ta.volatility.BollingerBands(df['close']).bollinger_mband()
+        bollinger = ta.volatility.BollingerBands(df['close'])
+        df['bollinger_hband'] = bollinger.bollinger_hband()
+        df['bollinger_lband'] = bollinger.bollinger_lband()
+        df['bollinger_mband'] = bollinger.bollinger_mavg()
         df['bollinger_width'] = (df['bollinger_hband'] - df['bollinger_lband']) / df['bollinger_mband']
 
         df['atr_14'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close']).average_true_range()

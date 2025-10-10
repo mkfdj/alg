@@ -9,15 +9,32 @@ import seaborn as sns
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Any
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import plotly.express as px
-from IPython.display import display, HTML
 import jax.numpy as jnp
 
+# Try to import plotly, but handle gracefully if not available
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    import plotly.express as px
+    from IPython.display import display, HTML
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    print("⚠️  Plotly not available. Interactive visualizations will be disabled.")
+
 # Set style for better looking plots
-plt.style.use('seaborn-v0_8')
-sns.set_palette("husl")
+try:
+    plt.style.use('seaborn-v0_8')
+except OSError:
+    try:
+        plt.style.use('seaborn')
+    except OSError:
+        plt.style.use('default')
+
+try:
+    sns.set_palette("husl")
+except:
+    pass  # Use default colors if seaborn fails
 
 
 class NCAVisualizer:
@@ -280,6 +297,11 @@ class NCAVisualizer:
 
     def create_interactive_dashboard(self, save_path: Optional[str] = None):
         """Create interactive dashboard using Plotly"""
+        if not PLOTLY_AVAILABLE:
+            print("⚠️  Plotly not available. Falling back to matplotlib dashboard...")
+            self.plot_training_progress(save_path=save_path)
+            return
+
         if not self.training_history['iteration']:
             return
 
