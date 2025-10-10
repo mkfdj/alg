@@ -41,7 +41,8 @@ flake8>=6.1.0
 
 # Jupyter/Kaggle Support
 jupyter>=1.0.0
-ipywidgets>=8.1.0
+ipywidgets>=8.1.0¨
+kaggle
 
 # Optional: Advanced features
 # transformers>=4.35.0  # For sentiment analysis
