@@ -1,544 +1,221 @@
 """
-Configuration module for NCA Trading Bot.
-
-This module provides centralized configuration management for all components
-of the Neural Cellular Automata trading system, including hyperparameters,
-API settings, trading parameters, and system configurations.
+Configuration settings for NCA Trading Bot
 """
 
-import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
-from pathlib import Path
+from typing import List, Dict, Optional, Tuple
+import os
 
 
 @dataclass
-class NCAConfig:
-    """Neural Cellular Automata configuration parameters."""
+class Config:
+    """Configuration settings for the NCA Trading Bot"""
 
-    # Architecture parameters
-    state_dim: int = 64
-    hidden_dim: int = 128
-    num_layers: int = 4
-    kernel_size: int = 3
+    # === NCA Model Configuration ===
+    nca_grid_size: Tuple[int, int] = (64, 64)
+    nca_channels: int = 16  # RGB(3) + Alpha(1) + Hidden(12)
+    nca_hidden_dim: int = 128
+    nca_layers: int = 2
+    nca_evolution_steps: int = 96  # Number of NCA steps per prediction
+    nca_learning_rate: float = 1e-3
+    nca_growth_threshold: float = 0.1  # Error threshold for grid expansion
+    nca_max_grid_size: Tuple[int, int] = (256, 256)
 
-    # Training parameters
-    learning_rate: float = 1e-3
-    weight_decay: float = 1e-4
-    dropout_rate: float = 0.1
+    # === Reinforcement Learning Configuration ===
+    rl_batch_size: int = 4096
+    rl_learning_rate: float = 1e-4
+    rl_gamma: float = 0.99  # Discount factor
+    rl_lambda: float = 0.95  # GAE parameter
+    rl_clip_eps: float = 0.2  # PPO clipping parameter
+    rl_value_coef: float = 0.5
+    rl_entropy_coef: float = 0.01
+    rl_max_grad_norm: float = 0.5
+    rl_update_epochs: int = 10
+    rl_ensemble_size: int = 5  # Number of parallel NCAs
 
-    # NCA-specific parameters
-    alpha: float = 0.1  # Update rate
-    beta: float = 0.1   # Growth rate
-    gamma: float = 0.1  # Decay rate
+    # === Trading Configuration ===
+    trading_initial_balance: float = 10000.0
+    trading_max_position_size: float = 0.25  # Max 25% of portfolio per trade
+    trading_max_risk_per_trade: float = 0.02  # Max 2% risk per trade
+    trading_max_portfolio_heat: float = 0.20  # Max 20% total exposure
+    trading_stop_loss_atr_multiplier: float = 2.0
+    trading_commission: float = 0.001  # 0.1% commission
+    trading_slippage: float = 0.0005  # 0.05% slippage
 
-    # Self-adaptation parameters
-    adaptation_rate: float = 0.01
-    mutation_rate: float = 0.001
-    selection_pressure: float = 0.1
+    # === Data Configuration ===
+    data_start_date: str = "1990-01-01"
+    data_end_date: str = "2021-12-31"
+    data_validation_split: float = 0.2
+    data_test_split: float = 0.1
+    data_sequence_length: int = 200  # Number of time steps for NCA input
+    data_prediction_horizon: int = 20  # Number of steps to predict ahead
 
+    # === Top Trading Tickers (2025) ===
+    top_tickers: List[str] = None
 
-@dataclass
-class DataConfig:
-    """Data handling configuration parameters."""
-
-    # Data sources
-    tickers: List[str] = None  # Will be set to default if None
-    timeframes: List[str] = None  # Will be set to default if None
-
-    # New dataset sources
-    use_sp500_yahoo: bool = True  # Fetch S&P500 from Yahoo Finance up to 2021
-    use_kaggle_nasdaq: bool = True  # Use Kaggle NASDAQ dataset
-    use_kaggle_huge_stock: bool = True  # Huge US stock market dataset
-    use_kaggle_sp500: bool = True  # S&P500 stock data
-    use_kaggle_world_stocks: bool = True  # World stock prices
-    use_kaggle_exchanges: bool = True  # Stock exchange data
-    use_quantopian_data: bool = False  # Quantopian data (limited availability)
-    use_global_financial_data: bool = True  # Global financial datasets
-    backtest_end_year: int = 2021  # Filter data <= this year for backtesting
-
-    # Kaggle API settings
-    kaggle_username: str = ""
-    kaggle_key: str = ""
-
-    # Technical indicators
-    rsi_period: int = 14
-    macd_fast: int = 12
-    macd_slow: int = 26
-    macd_signal: int = 9
-    bb_period: int = 20
-    bb_std: float = 2.0
-
-    # Data preprocessing
-    sequence_length: int = 60
-    prediction_horizon: int = 5
-    train_test_split: float = 0.8
-    validation_split: float = 0.1
-
-    # Normalization
-    normalize_features: bool = True
-    feature_range: Tuple[float, float] = (-1.0, 1.0)
-
-    # Memory management for large datasets
-    max_ram_gb: float = 320.0  # Maximum RAM to use for data loading
-    chunk_size_mb: int = 100  # Chunk size for processing large files
-
-
-@dataclass
-class TradingConfig:
-    """Trading configuration parameters."""
-
-    # Risk management
-    max_position_size: float = 0.1  # Max 10% of portfolio
-    max_daily_loss: float = 0.05    # Max 5% daily loss
-    max_drawdown: float = 0.15      # Max 15% drawdown
-    risk_per_trade: float = 0.01    # 1% risk per trade
-
-    # Position sizing
-    kelly_fraction: float = 0.5     # Use 50% of Kelly criterion
-    volatility_target: float = 0.15 # Target 15% annual volatility
-
-    # Entry/Exit signals
-    confidence_threshold: float = 0.7
-    stop_loss_pct: float = 0.05     # 5% stop loss
-    take_profit_pct: float = 0.10   # 10% take profit
-
-    # Trading costs
-    commission_per_share: float = 0.005
-    slippage_pct: float = 0.001     # 0.1% slippage
-
-
-@dataclass
-class TrainingConfig:
-    """Training configuration parameters with JAX/TPU optimizations."""
-
-    # RL parameters
-    gamma: float = 0.99             # Discount factor
-    gae_lambda: float = 0.95        # GAE parameter
-    clip_ratio: float = 0.2         # PPO clip ratio
-    entropy_coeff: float = 0.01     # Entropy coefficient
-    value_coeff: float = 0.5         # Value function coefficient
-
-    # Training hyperparameters - optimized for TPU v5e-8
-    batch_size: int = 2048          # Large batches for TPU efficiency (1024+)
-    micro_batch_size: int = 256     # Micro-batch size for gradient accumulation
-    gradient_accumulation_steps: int = 8  # Accumulate gradients over micro-batches
-    num_epochs: int = 10
-    max_grad_norm: float = 0.5
-    target_kl: float = 0.01
-
-    # JAX-specific parameters
-    use_jax: bool = True            # Use JAX for training on TPU
-    jax_optimizer: str = "adamw"    # adamw, adam, sgd
-    jax_lr_schedule: str = "cosine" # cosine, linear, constant
-
-    # DDP parameters (deprecated - use TPU config instead)
-    num_gpus: int = 2
-    local_rank: int = -1
-
-    # Mixed precision parameters (JAX)
-    use_mixed_precision: bool = True
-    precision_dtype: str = "bf16"   # bf16 preferred for TPU v5e-8
-    compute_dtype: str = "f32"      # f32 for stable computations
-
-    # Checkpointing
-    save_freq: int = 1000
-    eval_freq: int = 100
-    log_freq: int = 10
-
-
-@dataclass
-class APIConfig:
-    """API configuration parameters."""
-
-    # Alpaca API
-    alpaca_api_key: str = "PKJ346E2YWMT7HCFZX09"
-    alpaca_secret_key: str = "w3LaDFeYjy3CJM9S37Ox0YQbeQIgEyfmlhFO7Y3m"
-    alpaca_base_url: str = "https://paper-api.alpaca.markets"
-
-    # Alpha Vantage API (fallback)
-    alpha_vantage_key: str = ""
-
-    # Polygon API (alternative)
-    polygon_key: str = ""
-
-    # Rate limiting
-    requests_per_minute: int = 200
-    requests_per_second: int = 5
-
-
-@dataclass
-class TPUConfig:
-    """TPU-specific configuration parameters for JAX/TPU v5e-8."""
-
-    # TPU hardware - v5e-8 specific
-    tpu_cores: int = 8  # TPU v5e-8 has 8 cores
-    tpu_chips: int = 1  # Single host by default
-    tpu_topology: str = "2x4"  # TPU v5e-8 topology (2x4 = 8 cores)
-
-    # JAX/TPU optimizations for v5e-8
-    use_jax: bool = True  # Use JAX instead of PyTorch for TPU
-    jax_backend: str = "tpu"  # JAX backend: tpu, gpu, cpu
-
-    # Mixed precision - bfloat16 preferred for TPU v5e
-    mixed_precision: bool = True
-    precision_dtype: str = "bf16"  # bf16 (bfloat16) or f16 (float16)
-    compute_dtype: str = "f32"  # f32 for stable gradients
-
-    # Sharding configuration for distributed training
-    enable_sharding: bool = True
-    sharding_strategy: str = "2d"  # 2d, 1d, replicated, auto
-    mesh_shape: Tuple[int, int] = (1, 8)  # (chips, cores_per_chip) for v5e-8
-    axis_names: Tuple[str, str] = ("data", "model")  # Sharding axis names
-
-    # Large batch optimization
-    batch_size: int = 2048  # Large batches for TPU efficiency (1024+)
-    micro_batch_size: int = 256  # Micro-batch for gradient accumulation
-    gradient_accumulation_steps: int = 8
-
-    # Memory management for 40GB storage
-    max_memory_gb: float = 35.0  # Fill to 35GB for failsafe (out of 40GB)
-    memory_fraction: float = 0.875  # 35/40 = 0.875
-    enable_memory_optimization: bool = True
-
-    # XLA compilation and optimization
-    xla_compile: bool = True
-    xla_persistent_cache: bool = True
-    xla_memory_fraction: float = 0.8
-    xla_precompile: bool = False
-
-    # TPU-specific optimizations
-    matmul_precision: str = "high"  # high, medium, low
-    enable_fusion: bool = True
-    enable_remat: bool = True  # Recompute for memory efficiency
-    remat_policy: str = "dots_with_no_batch_dims"  # Rematerialization policy
-
-    # Performance monitoring
-    tpu_metrics_enabled: bool = True
-    xla_metrics_enabled: bool = True
-    memory_stats_enabled: bool = True
-    profiling_enabled: bool = False
-
-
-@dataclass
-class SystemConfig:
-    """System configuration parameters."""
-
-    # Paths
-    project_root: Path = None
-    data_dir: Path = None
-    model_dir: Path = None
-    log_dir: Path = None
-
-    # Logging
-    log_level: str = "INFO"
-    log_file: str = "nca_trading_bot.log"
-
-    # Performance
-    num_workers: int = 4
-    pin_memory: bool = True
-    persistent_workers: bool = True
-
-    # Hardware
-    device: str = "auto"  # auto, cpu, cuda, tpu
-    seed: int = 42
-
-    # Caching
-    cache_size: int = 1000
-    cache_ttl: int = 3600  # 1 hour
-
-    # Monitoring
-    enable_tensorboard: bool = True
-    enable_wandb: bool = False
-    wandb_project: str = "nca-trading-bot"
-
-
-class ConfigManager:
-    """
-    Centralized configuration manager for the NCA Trading Bot.
-
-    Handles loading configuration from environment variables, config files,
-    and provides validation and type checking.
-    """
-
-    def __init__(self, config_path: Optional[str] = None):
-        """Initialize configuration manager.
-
-        Args:
-            config_path: Path to configuration file (optional)
-        """
-        self.config_path = config_path or os.getenv("NCA_CONFIG_PATH")
-        self._configs = {}
-
-        # Initialize all config sections
-        self.nca = NCAConfig()
-        self.data = DataConfig()
-        self.trading = TradingConfig()
-        self.training = TrainingConfig()
-        self.api = APIConfig()
-        self.system = SystemConfig()
-        self.tpu = TPUConfig()
-
-        # Set default tickers and timeframes if not provided
-        if self.data.tickers is None:
-            self.data.tickers = [
-                "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA",
-                "NVDA", "META", "NFLX", "SPY", "QQQ"
+    def __post_init__(self):
+        if self.top_tickers is None:
+            self.top_tickers = [
+                "NVDA",  # NVIDIA - AI/semiconductors
+                "MSFT",  # Microsoft - Cloud/software
+                "AAPL",  # Apple - Consumer tech
+                "AMZN",  # Amazon - E-commerce/cloud
+                "GOOGL", # Alphabet - Search/AI
+                "META",  # Meta - Social/metaverse
+                "BRK-B", # Berkshire Hathaway - Diversified
+                "TSLA",  # Tesla - EV/Energy
+                "UNH",   # UnitedHealth - Healthcare
+                "JNJ"    # Johnson & Johnson - Healthcare
             ]
 
-        if self.data.timeframes is None:
-            self.data.timeframes = ["1m", "5m", "15m", "1h", "1d"]
+    # === JAX/TPU Configuration ===
+    jax_platform: str = "tpu"
+    jax_enable_x64: bool = False  # Use float32 for speed
+    jax_debug_nans: bool = True
+    jax_memory_fraction: float = 0.9
+    tpu_device_count: int = 8
 
-        # Set system paths
-        self._setup_paths()
+    # === Dataset Configuration ===
+    datasets: Dict[str, Dict] = None
 
-        # Load configuration from file if provided
-        if self.config_path:
-            self._load_from_file()
+    def __post_init__(self):
+        if self.datasets is None:
+            self.datasets = {
+                "kaggle_stock_market": {
+                    "path": "/kaggle/input/stock-market-dataset",
+                    "format": "csv",
+                    "description": "NASDAQ stocks with OHLCV data"
+                },
+                "yahoo_finance": {
+                    "tickers": self.top_tickers,
+                    "format": "yfinance",
+                    "description": "Real-time and historical data via yfinance"
+                },
+                "sp500_components": {
+                    "path": "/kaggle/input/s-and-p-500",
+                    "format": "csv",
+                    "description": "S&P 500 historical data"
+                }
+            }
 
-        # Load from environment variables
-        self._load_from_env()
+    # === Alpaca API Configuration ===
+    alpaca_paper_api_key: Optional[str] = None
+    alpaca_paper_secret_key: Optional[str] = None
+    alpaca_paper_base_url: str = "https://paper-api.alpaca.markets"
+    alpaca_live_api_key: Optional[str] = None
+    alpaca_live_secret_key: Optional[str] = None
+    alpaca_live_base_url: str = "https://api.alpaca.markets"
 
-        # Validate configuration
-        self._validate_config()
+    def get_alpaca_config(self, paper_mode: bool = True) -> Dict[str, str]:
+        """Get Alpaca API configuration for paper or live trading"""
+        if paper_mode:
+            # For paper trading, use single API key (paper accounts have exception)
+            paper_api_key = self.alpaca_paper_api_key or os.getenv("ALPACA_PAPER_API_KEY")
+            return {
+                "key_id": paper_api_key,
+                "secret_key": paper_api_key,  # Paper trading uses same key for both
+                "base_url": self.alpaca_paper_base_url
+            }
+        else:
+            # For live trading, use separate API key and secret key
+            return {
+                "key_id": self.alpaca_live_api_key or os.getenv("ALPACA_LIVE_API_KEY"),
+                "secret_key": self.alpaca_live_secret_key or os.getenv("ALPACA_LIVE_SECRET_KEY"),
+                "base_url": self.alpaca_live_base_url
+            }
 
-    def _setup_paths(self) -> None:
-        """Set up system paths."""
-        self.system.project_root = Path(__file__).parent
-        self.system.data_dir = self.system.project_root / "data"
-        self.system.model_dir = self.system.project_root / "models"
-        self.system.log_dir = self.system.project_root / "logs"
+    # === Technical Indicators Configuration ===
+    technical_indicators: Dict[str, Dict] = None
 
-        # Create directories if they don't exist
-        for path in [self.system.data_dir, self.system.model_dir, self.system.log_dir]:
-            path.mkdir(exist_ok=True)
+    def __post_init__(self):
+        if self.technical_indicators is None:
+            self.technical_indicators = {
+                "rsi": {"period": 14},
+                "macd": {"fast": 12, "slow": 26, "signal": 9},
+                "bollinger": {"period": 20, "std": 2},
+                "atr": {"period": 14},
+                "sma": {"periods": [5, 20, 50]},
+                "ema": {"periods": [12, 26]},
+                "stochastic": {"k": 14, "d": 3},
+                "volume_sma": {"period": 20},
+                "vwap": {"periods": [5, 20]}
+            }
 
-    def _load_from_file(self) -> None:
-        """Load configuration from file."""
-        try:
-            import yaml
-            with open(self.config_path, 'r') as f:
-                config_dict = yaml.safe_load(f)
+    # === Logging and Monitoring ===
+    log_level: str = "INFO"
+    wandb_project: Optional[str] = "nca-trading-bot"
+    wandb_entity: Optional[str] = None
+    save_checkpoints: bool = True
+    checkpoint_dir: str = "./checkpoints"
+    tensorboard_log_dir: str = "./logs"
 
-            self._update_from_dict(config_dict)
-        except Exception as e:
-            print(f"Warning: Failed to load config from {self.config_path}: {e}")
+    # === Optimization Configuration ===
+    use_float16: bool = True  # Use float16 for memory efficiency
+    gradient_checkpointing: bool = True  # Enable gradient checkpointing
+    mixed_precision: bool = True
+    compile_nca_evolution: bool = True  # JIT compile NCA evolution
+    compile_rl_training: bool = True  # JIT compile RL training
 
-    def _load_from_env(self) -> None:
-        """Load configuration from environment variables."""
-        # API keys
-        if api_key := os.getenv("ALPACA_API_KEY"):
-            self.api.alpaca_api_key = api_key
-        if secret_key := os.getenv("ALPACA_SECRET_KEY"):
-            self.api.alpaca_secret_key = secret_key
+    # === Risk Management Configuration ===
+    risk_management: Dict[str, float] = None
 
-        # Alpha Vantage
-        if av_key := os.getenv("ALPHA_VANTAGE_KEY"):
-            self.api.alpha_vantage_key = av_key
+    def __post_init__(self):
+        if self.risk_management is None:
+            self.risk_management = {
+                "max_drawdown": 0.20,  # 20% max drawdown
+                "max_consecutive_losses": 5,
+                "min_sharpe_ratio": 0.5,
+                "max_volatility": 0.30,  # 30% annual volatility
+                "min_liquidity": 50000000,  # $50M daily volume minimum
+                "max_position_age_days": 30,  # Close positions after 30 days
+                "portfolio_rebalance_frequency": "daily"
+            }
 
-        # Polygon
-        if poly_key := os.getenv("POLYGON_API_KEY"):
-            self.api.polygon_key = poly_key
+    @classmethod
+    def from_args(cls, args) -> "Config":
+        """Create configuration from command line arguments"""
+        config = cls()
 
-        # Kaggle API
-        if kaggle_user := os.getenv("KAGGLE_USERNAME"):
-            self.data.kaggle_username = kaggle_user
-        if kaggle_key := os.getenv("KAGGLE_KEY"):
-            self.data.kaggle_key = kaggle_key
+        # Override with command line arguments
+        if hasattr(args, 'mode') and args.mode:
+            config.trading_mode = args.mode
+        if hasattr(args, 'tickers') and args.tickers:
+            config.top_tickers = args.tickers
+        if hasattr(args, 'datasets') and args.datasets:
+            config.selected_datasets = args.datasets
+        if hasattr(args, 'paper_mode') and args.paper_mode:
+            config.paper_trading = args.paper_mode
 
-        # System settings
-        if device := os.getenv("NCA_DEVICE"):
-            self.system.device = device
-        if log_level := os.getenv("NCA_LOG_LEVEL"):
-            self.system.log_level = log_level.upper()
+        return config
 
-        # TPU settings
-        if tpu_cores := os.getenv("NCA_TPU_CORES"):
-            self.tpu.tpu_cores = int(tpu_cores)
-        if tpu_chips := os.getenv("NCA_TPU_CHIPS"):
-            self.tpu.tpu_chips = int(tpu_chips)
-        if xla_memory := os.getenv("NCA_XLA_MEMORY_FRACTION"):
-            self.tpu.xla_memory_fraction = float(xla_memory)
-        if sharding_strategy := os.getenv("NCA_SHARDING_STRATEGY"):
-            self.tpu.sharding_strategy = sharding_strategy
-
-        # Trading parameters
-        if max_pos := os.getenv("NCA_MAX_POSITION"):
-            self.trading.max_position_size = float(max_pos)
-        if risk_per_trade := os.getenv("NCA_RISK_PER_TRADE"):
-            self.trading.risk_per_trade = float(risk_per_trade)
-
-        # Data parameters
-        if backtest_year := os.getenv("NCA_BACKTEST_END_YEAR"):
-            self.data.backtest_end_year = int(backtest_year)
-        if max_ram := os.getenv("NCA_MAX_RAM_GB"):
-            self.data.max_ram_gb = float(max_ram)
-
-    def _update_from_dict(self, config_dict: Dict) -> None:
-        """Update configuration from dictionary."""
-        for section_name, section_config in config_dict.items():
-            if hasattr(self, section_name):
-                section = getattr(self, section_name)
-                for key, value in section_config.items():
-                    if hasattr(section, key):
-                        setattr(section, key, value)
-
-    def _validate_config(self) -> None:
-        """Validate configuration parameters."""
-        # Validate API keys
-        if not self.api.alpaca_api_key or not self.api.alpaca_secret_key:
-            print("Warning: Alpaca API keys not configured. Paper trading will not work.")
+    def validate(self) -> bool:
+        """Validate configuration settings"""
+        errors = []
 
         # Validate trading parameters
-        assert 0 < self.trading.max_position_size <= 1, "max_position_size must be between 0 and 1"
-        assert 0 < self.trading.risk_per_trade <= 0.1, "risk_per_trade should be reasonable"
-        assert 0 < self.trading.confidence_threshold <= 1, "confidence_threshold must be between 0 and 1"
-
-        # Validate training parameters
-        assert self.training.batch_size > 0, "batch_size must be positive"
-        assert 0 < self.training.clip_ratio <= 1, "clip_ratio must be between 0 and 1"
+        if self.trading_max_position_size > 1.0:
+            errors.append("Max position size cannot exceed 100%")
+        if self.trading_max_risk_per_trade > 0.05:
+            errors.append("Max risk per trade should not exceed 5%")
 
         # Validate NCA parameters
-        assert self.nca.state_dim > 0, "state_dim must be positive"
-        assert self.nca.num_layers > 0, "num_layers must be positive"
+        if self.nca_grid_size[0] > self.nca_max_grid_size[0]:
+            errors.append("Grid size exceeds maximum")
+        if self.nca_learning_rate <= 0:
+            errors.append("Learning rate must be positive")
 
-        # Validate TPU parameters
-        assert self.tpu.tpu_cores > 0, "tpu_cores must be positive"
-        assert self.tpu.tpu_chips > 0, "tpu_chips must be positive"
-        assert 0 < self.tpu.xla_memory_fraction <= 1, "xla_memory_fraction must be between 0 and 1"
-        assert self.tpu.sharding_strategy in ["2d", "1d", "replicated"], "Invalid sharding strategy"
+        # Validate Alpaca configuration
+        if not self.alpaca_paper_api_key:
+            errors.append("Alpaca paper API key not configured")
 
-    def save_config(self, path: Optional[str] = None) -> None:
-        """Save current configuration to file.
+        if errors:
+            print("Configuration validation errors:")
+            for error in errors:
+                print(f"  - {error}")
+            return False
 
-        Args:
-            path: Path to save configuration (optional)
-        """
-        save_path = path or self.config_path or "config.yaml"
-
-        try:
-            import yaml
-
-            config_dict = {}
-            for attr_name in dir(self):
-                if not attr_name.startswith('_') and isinstance(getattr(self, attr_name), (NCAConfig, DataConfig, TradingConfig, TrainingConfig, APIConfig, SystemConfig, TPUConfig)):
-                    config_dict[attr_name] = {}
-                    for field in dir(getattr(self, attr_name)):
-                        if not field.startswith('_') and not callable(getattr(getattr(self, attr_name), field)):
-                            config_dict[attr_name][field] = getattr(getattr(self, attr_name), field)
-
-            with open(save_path, 'w') as f:
-                yaml.dump(config_dict, f, default_flow_style=False)
-
-            print(f"Configuration saved to {save_path}")
-
-        except Exception as e:
-            print(f"Error saving configuration: {e}")
-
-    def get_config_summary(self) -> Dict:
-        """Get a summary of current configuration.
-
-        Returns:
-            Dictionary containing configuration summary
-        """
-        return {
-            "nca": {
-                "state_dim": self.nca.state_dim,
-                "hidden_dim": self.nca.hidden_dim,
-                "num_layers": self.nca.num_layers,
-                "learning_rate": self.nca.learning_rate
-            },
-            "data": {
-                "num_tickers": len(self.data.tickers),
-                "sequence_length": self.data.sequence_length,
-                "prediction_horizon": self.data.prediction_horizon
-            },
-            "trading": {
-                "max_position_size": self.trading.max_position_size,
-                "risk_per_trade": self.trading.risk_per_trade,
-                "confidence_threshold": self.trading.confidence_threshold
-            },
-            "training": {
-                "batch_size": self.training.batch_size,
-                "num_gpus": self.training.num_gpus,
-                "use_mixed_precision": self.training.use_mixed_precision
-            },
-            "system": {
-                "device": self.system.device,
-                "log_level": self.system.log_level,
-                "num_workers": self.system.num_workers
-            },
-            "tpu": {
-                "tpu_cores": self.tpu.tpu_cores,
-                "tpu_chips": self.tpu.tpu_chips,
-                "xla_compile": self.tpu.xla_compile,
-                "sharding_strategy": self.tpu.sharding_strategy,
-                "bf16_precision": self.tpu.mixed_precision
-            }
-        }
+        return True
 
 
 # Global configuration instance
-config = ConfigManager()
-
-
-def get_config() -> ConfigManager:
-    """Get the global configuration instance.
-
-    Returns:
-        Global configuration manager instance
-    """
-    return config
-
-
-def detect_tpu_availability() -> bool:
-    """Detect if TPU is available.
-
-    Returns:
-        True if TPU is available, False otherwise
-    """
-    try:
-        import torch_xla.core.xla_model as xm
-        return xm.is_master_ordinal()
-    except ImportError:
-        return False
-
-
-def get_tpu_device_count() -> int:
-    """Get the number of available TPU devices.
-
-    Returns:
-        Number of TPU devices available
-    """
-    try:
-        import torch_xla.core.xla_model as xm
-        return xm.xrt_world_size()
-    except ImportError:
-        return 0
-
-
-def reload_config() -> ConfigManager:
-    """Reload configuration from file and environment.
-
-    Returns:
-        Updated configuration manager instance
-    """
-    global config
-    config = ConfigManager(config.config_path)
-    return config
-
-
-if __name__ == "__main__":
-    # Example usage and validation
-    print("NCA Trading Bot Configuration")
-    print("=" * 40)
-
-    config_summary = config.get_config_summary()
-    for section, params in config_summary.items():
-        print(f"\n{section.upper()} CONFIGURATION:")
-        for key, value in params.items():
-            print(f"  {key}: {value}")
-
-    print(f"\nAPI Keys Configured: {'Yes' if config.api.alpaca_api_key else 'No'}")
-    print(f"Data Directory: {config.system.data_dir}")
-    print(f"Model Directory: {config.system.model_dir}")
+config = Config()

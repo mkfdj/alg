@@ -1,852 +1,456 @@
 """
-Neural Cellular Automata (NCA) Model for Trading
-
-This module implements a Neural Cellular Automata model that can adapt and evolve
-over time for quantitative trading applications. The model is designed to learn
-complex patterns in financial data and make trading decisions.
-
-Based on research papers:
-- "Neural Cellular Automata for Reinforcement Learning" (arXiv:2008.06261)
-- "Self-Organizing Neural Networks for Pattern Recognition" (arXiv:2103.05284)
-- "Adaptive Neural Cellular Automata for Financial Time Series" (arXiv:2209.08973)
+Adaptive Neural Cellular Automata implementation for trading
 """
 
-import math
-import os
-import random
-import time
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
-
+import jax
+import jax.numpy as jnp
+import jax.random as jrand
+from jax import lax, config, vmap, jit, grad, value_and_grad
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+from flax import linen as nn
+from flax.training import train_state
+import optax
+from typing import Tuple, Dict, List, Optional, Any
 import numpy as np
-import pandas as pd
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.cuda.amp import autocast, GradScaler
-import torch.distributed as dist
 
-# JAX imports for TPU optimization
-try:
-    import jax
-    import jax.numpy as jnp
-    from flax import linen as nn_flax
-    import optax
-    from jax.sharding import Mesh, PartitionSpec as P
-    from jax.experimental import mesh_utils
-    JAX_AVAILABLE = True
-except ImportError:
-    JAX_AVAILABLE = False
-
-from config import get_config, detect_tpu_availability, get_tpu_device_count
-from utils import PerformanceMonitor
+from .config import Config
 
 
-class NCACell(nn.Module):
-    """
-    Neural Cellular Automata cell implementation.
+class SobelPerception(nn.Module):
+    """Sobel filter perception for NCA cells"""
 
-    Implements the update rule for a single cell in the NCA grid.
-    """
-
-    def __init__(self, state_dim: int, hidden_dim: int, kernel_size: int = 3):
+    @nn.compact
+    def __call__(self, grid):
         """
-        Initialize NCA cell.
-
+        Apply Sobel filters for gradient perception
         Args:
-            state_dim: Dimension of cell state
-            hidden_dim: Dimension of hidden layers
-            kernel_size: Size of convolutional kernel
-        """
-        super(NCACell, self).__init__()
-        self.state_dim = state_dim
-        self.hidden_dim = hidden_dim
-        self.kernel_size = kernel_size
-
-        # Perception network
-        self.perception = nn.Sequential(
-            nn.Conv1d(state_dim, hidden_dim, kernel_size, padding=kernel_size // 2),
-            nn.ReLU(),
-            nn.Conv1d(hidden_dim, hidden_dim, kernel_size, padding=kernel_size // 2),
-            nn.ReLU()
-        )
-
-        # Update network
-        self.update = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, state_dim),
-            nn.Tanh()  # Bounded updates
-        )
-
-        # Stochastic update probability
-        self.update_prob = nn.Parameter(torch.tensor(0.1))
-
-    def forward(self, x):
-        """
-        Forward pass of NCA cell.
-
-        Args:
-            x: Input tensor of shape (batch_size, state_dim, grid_size)
-
+            grid: [batch, height, width, channels]
         Returns:
-            Updated tensor of shape (batch_size, state_dim, grid_size)
+            perception: [batch, height, width, channels * 3]
+        """
+        batch, height, width, channels = grid.shape
+
+        # Sobel kernels for gradient detection
+        sobel_x = jnp.array([[-1, 0, +1], [-2, 0, +2], [-1, 0, +1]], dtype=jnp.float32)
+        sobel_y = jnp.array([[-1, -2, -1], [0, 0, 0], [+1, +2, +1]], dtype=jnp.float32)
+
+        # Add channel dimension
+        sobel_x = sobel_x[None, None, :, :]  # [1, 1, 3, 3]
+        sobel_y = sobel_y[None, None, :, :]  # [1, 1, 3, 3]
+
+        # Reshape for convolution
+        grid_reshaped = grid.reshape(-1, height, width, channels)
+
+        # Apply Sobel filters to each channel
+        grad_x = jnp.zeros_like(grid_reshaped)
+        grad_y = jnp.zeros_like(grid_reshaped)
+
+        for c in range(channels):
+            channel = grid_reshaped[..., c:c+1]
+            grad_x = grad_x.at[..., c].add(
+                lax.conv_general_dilated(
+                    channel,
+                    sobel_x,
+                    window_strides=[1, 1],
+                    padding='SAME'
+                ).squeeze(-1)
+            )
+            grad_y = grad_y.at[..., c].add(
+                lax.conv_general_dilated(
+                    channel,
+                    sobel_y,
+                    window_strides=[1, 1],
+                    padding='SAME'
+                ).squeeze(-1)
+            )
+
+        # Concatenate original state with gradients
+        perception = jnp.concatenate([grid_reshaped, grad_x, grad_y], axis=-1)
+
+        return perception.reshape(batch, height, width, channels * 3)
+
+
+class UpdateRule(nn.Module):
+    """NCA cell update rule MLP"""
+
+    hidden_dim: int = 128
+    channels: int = 16
+
+    @nn.compact
+    def __call__(self, perception):
+        """
+        Apply update rule to perception vector
+        Args:
+            perception: [batch, height, width, perception_dim]
+        Returns:
+            update: [batch, height, width, channels]
+        """
+        x = nn.Dense(features=self.hidden_dim)(perception)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.hidden_dim)(x)
+        x = nn.relu(x)
+
+        # Output update with zero initialization for stability
+        update = nn.Dense(
+            features=self.channels,
+            kernel_init=nn.initializers.zeros,
+            bias_init=nn.initializers.zeros
+        )(x)
+
+        return update
+
+
+class AdaptiveNCA(nn.Module):
+    """Adaptive Neural Cellular Automata for trading"""
+
+    config: Config
+
+    def setup(self):
+        """Initialize NCA components"""
+        self.perception = SobelPerception()
+        self.update_rule = UpdateRule(
+            hidden_dim=self.config.nca_hidden_dim,
+            channels=self.config.nca_channels
+        )
+
+        # Growth parameters for adaptive architecture
+        self.growth_threshold = self.config.nca_growth_threshold
+        self.max_grid_size = self.config.nca_max_grid_size
+
+    def __call__(self, grid, rng_key, training=True):
+        """
+        Evolve NCA grid for one step
+        Args:
+            grid: [batch, height, width, channels]
+            rng_key: JAX random key
+            training: Whether in training mode
+        Returns:
+            new_grid: [batch, height, width, channels]
         """
         # Perception step
-        perception = self.perception(x)
+        perception = self.perception(grid)
 
-        # Flatten for linear layers
-        batch_size, channels, grid_size = perception.shape
-        perception_flat = perception.permute(0, 2, 1).reshape(-1, channels)
+        # Update rule
+        update = self.update_rule(perception)
 
-        # Update step
-        update = self.update(perception_flat)
-        update = update.reshape(batch_size, grid_size, self.state_dim).permute(0, 2, 1)
+        if training:
+            # Stochastic update during training
+            rng_key, subkey = jrand.split(rng_key)
+            update_mask = jrand.bernoulli(subkey, p=0.5, shape=grid.shape)
+            update = update * update_mask
 
-        # Stochastic update
-        mask = torch.rand_like(x) < self.update_prob
-        x_new = x + mask * update
+        # Residual update
+        new_grid = grid + update
 
-        return x_new
+        # Living cell masking
+        alive_mask = self._get_alive_mask(new_grid)
+        new_grid = new_grid * alive_mask
 
+        return new_grid
 
-class NCATradingModel(nn.Module):
-    """
-    Neural Cellular Automata model for trading.
+    def _get_alive_mask(self, grid):
+        """Create mask for living cells (alpha > 0.1)"""
+        # Alpha channel is typically channel 3 (RGB + Alpha)
+        alpha = grid[..., 3:4]
 
-    Implements an NCA model that can process financial time series data
-    and make trading decisions.
-    """
+        # Check if any neighbor is alive
+        alive = lax.max_pool(alpha, window_shape=(3, 3), strides=(1, 1), padding='SAME')
+        alive_mask = (alive > 0.1).astype(grid.dtype)
 
-    def __init__(self, config):
+        return alive_mask
+
+    @jit
+    def evolve(self, grid, rng_key, steps=96):
         """
-        Initialize NCA trading model.
-
+        Evolve NCA grid for multiple steps
         Args:
-            config: Configuration object
+            grid: [batch, height, width, channels]
+            rng_key: JAX random key
+            steps: Number of evolution steps
+        Returns:
+            final_grid: [batch, height, width, channels]
         """
-        super(NCATradingModel, self).__init__()
+        def step_fn(carry, _):
+            grid, rng_key = carry
+            rng_key, subkey = jrand.split(rng_key)
+            new_grid = self(grid, subkey, training=False)
+            return (new_grid, rng_key), None
+
+        (final_grid, _), _ = lax.scan(step_fn, (grid, rng_key), None, length=steps)
+        return final_grid
+
+    def should_grow(self, grid, error_rate, data_complexity):
+        """
+        Determine if NCA should grow based on performance and data complexity
+        Args:
+            grid: Current NCA grid
+            error_rate: Current prediction error rate
+            data_complexity: Complexity measure of input data
+        Returns:
+            should_grow: Boolean indicating if grid should expand
+        """
+        batch, height, width, channels = grid.shape
+
+        # Check if we haven't reached max size
+        at_max_size = (height >= self.max_grid_size[0] or
+                      width >= self.max_grid_size[1])
+
+        # Check growth criteria
+        error_threshold = self.growth_threshold
+        complexity_threshold = 0.5
+
+        should_grow = (error_rate > error_threshold and
+                      data_complexity > complexity_threshold and
+                      not at_max_size)
+
+        return should_grow
+
+    def expand_grid(self, grid):
+        """
+        Expand NCA grid by adding cells at boundaries
+        Args:
+            grid: [batch, height, width, channels]
+        Returns:
+            expanded_grid: [batch, height+2, width+2, channels]
+        """
+        # Pad grid with zeros at boundaries
+        expanded_grid = jnp.pad(
+            grid,
+            ((0, 0), (1, 1), (1, 1), (0, 0)),
+            mode='constant',
+            constant_values=0
+        )
+
+        return expanded_grid
+
+    def initialize_grid(self, batch_size=1, seed=42):
+        """
+        Initialize NCA grid with single seed cell
+        Args:
+            batch_size: Number of grids to initialize
+            seed: Random seed
+        Returns:
+            grid: [batch_size, height, width, channels]
+        """
+        rng_key = jrand.PRNGKey(seed)
+        height, width = self.config.nca_grid_size
+        channels = self.config.nca_channels
+
+        # Initialize with zeros
+        grid = jnp.zeros((batch_size, height, width, channels))
+
+        # Add seed cell at center
+        center_y, center_x = height // 2, width // 2
+        grid = grid.at[:, center_y, center_x, :].set(1.0)  # All channels = 1.0
+
+        return grid
+
+
+class NCAEnsemble:
+    """Ensemble of NCAs for robust predictions"""
+
+    def __init__(self, config: Config):
         self.config = config
-        self.state_dim = config.nca.state_dim
-        self.hidden_dim = config.nca.hidden_dim
-        self.num_layers = config.nca.num_layers
-        self.kernel_size = config.nca.kernel_size
+        self.num_models = config.rl_ensemble_size
+        self.models = []
+        self.states = []
 
-        # Input projection
-        self.input_projection = nn.Linear(
-            config.data.sequence_length * len(config.data.tickers),
-            self.state_dim * 16  # Grid size of 16
-        )
+    def initialize(self, rng_key):
+        """Initialize ensemble of NCA models"""
+        keys = jrand.split(rng_key, self.num_models)
 
-        # NCA layers
-        self.nca_layers = nn.ModuleList([
-            NCACell(self.state_dim, self.hidden_dim, self.kernel_size)
-            for _ in range(self.num_layers)
-        ])
+        for i in range(self.num_models):
+            model = AdaptiveNCA(self.config)
 
-        # Output heads
-        self.price_prediction_head = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1),
-            nn.Flatten(),
-            nn.Linear(self.state_dim, 1)
-        )
+            # Initialize parameters
+            dummy_grid = jnp.zeros((1, *self.config.nca_grid_size, self.config.nca_channels))
+            params = model.init(keys[i], dummy_grid, keys[i], training=False)
 
-        self.signal_head = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1),
-            nn.Flatten(),
-            nn.Linear(self.state_dim, 3)  # Buy, Hold, Sell
-        )
+            # Create optimizer
+            tx = optax.adam(self.config.nca_learning_rate)
+            state = train_state.TrainState.create(
+                apply_fn=model.apply,
+                params=params,
+                tx=tx
+            )
 
-        self.risk_head = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1),
-            nn.Flatten(),
-            nn.Linear(self.state_dim, 1),
-            nn.Sigmoid()
-        )
+            self.models.append(model)
+            self.states.append(state)
 
-        # Training parameters
-        self.optimizer = torch.optim.Adam(
-            self.parameters(),
-            lr=config.nca.learning_rate,
-            weight_decay=config.nca.weight_decay
-        )
-
-        # Mixed precision setup
-        self.scaler = GradScaler() if config.training.use_mixed_precision and torch.cuda.is_available() else None
-
-        # Performance monitoring
-        self.performance_monitor = PerformanceMonitor()
-
-        # Model state
-        self.training_step = 0
-        self.last_update_time = datetime.now()
-
-    def forward(self, x, evolution_steps: int = 10):
+    def predict(self, grids, rng_key):
         """
-        Forward pass of NCA trading model.
-
+        Make ensemble prediction
         Args:
-            x: Input tensor of shape (batch_size, sequence_length, features)
-            evolution_steps: Number of NCA evolution steps
-
+            grids: Input NCA grids [batch, height, width, channels]
+            rng_key: Random key for evolution
         Returns:
-            Dictionary with model outputs
+            predictions: Ensemble predictions
         """
-        batch_size = x.shape[0]
+        keys = jrand.split(rng_key, self.num_models)
+        predictions = []
 
-        # Project input to NCA grid
-        x_flat = x.view(batch_size, -1)
-        x_grid = self.input_projection(x_flat)
-        x_grid = x_grid.view(batch_size, self.state_dim, 16)
+        for i, (model, state) in enumerate(zip(self.models, self.states)):
+            pred = model.apply(
+                state.params,
+                grids,
+                keys[i],
+                training=False
+            )
+            predictions.append(pred)
 
-        # NCA evolution
-        for step in range(evolution_steps):
-            for layer in self.nca_layers:
-                x_grid = layer(x_grid)
+        # Stack and average predictions
+        predictions = jnp.stack(predictions, axis=0)  # [ensemble, batch, ...]
+        ensemble_pred = jnp.mean(predictions, axis=0)
 
-        # Generate outputs
-        price_prediction = self.price_prediction_head(x_grid)
-        signal_logits = self.signal_head(x_grid)
-        risk_probability = self.risk_head(x_grid)
+        return ensemble_pred, predictions
 
-        return {
-            'price_prediction': price_prediction,
-            'signal_probabilities': F.softmax(signal_logits, dim=1),
-            'signal_logits': signal_logits,
-            'risk_probability': risk_probability
-        }
-
-    def compute_loss(self, outputs, targets):
-        """
-        Compute loss for model outputs.
-
-        Args:
-            outputs: Model outputs dictionary
-            targets: Target dictionary
-
-        Returns:
-            Loss tensor
-        """
-        # Price prediction loss
-        price_loss = F.mse_loss(outputs['price_prediction'], targets['price'])
-
-        # Signal classification loss
-        signal_loss = F.cross_entropy(outputs['signal_logits'], targets['signal'])
-
-        # Risk prediction loss
-        risk_loss = F.binary_cross_entropy(
-            outputs['risk_probability'].squeeze(),
-            targets['risk']
-        )
-
-        # Total loss
-        total_loss = price_loss + signal_loss + risk_loss
-
-        return {
-            'total_loss': total_loss,
-            'price_loss': price_loss,
-            'signal_loss': signal_loss,
-            'risk_loss': risk_loss
-        }
-
-    def train_step(self, batch):
-        """
-        Perform a single training step.
-
-        Args:
-            batch: Batch of training data
-
-        Returns:
-            Dictionary with loss values
-        """
-        self.optimizer.zero_grad()
-
-        # Extract inputs and targets
-        inputs = batch['inputs']
-        targets = {
-            'price': batch['price'],
-            'signal': batch['signal'],
-            'risk': batch['risk']
-        }
-
-        # Forward pass with mixed precision
-        if self.scaler:
-            with autocast():
-                outputs = self.forward(inputs)
-                losses = self.compute_loss(outputs, targets)
-
-            # Backward pass with gradient scaling
-            self.scaler.scale(losses['total_loss']).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-        else:
-            outputs = self.forward(inputs)
-            losses = self.compute_loss(outputs, targets)
-
-            # Backward pass
-            losses['total_loss'].backward()
-            self.optimizer.step()
-
-        # Update training step
-        self.training_step += 1
-        self.last_update_time = datetime.now()
-
-        # Log performance metrics
-        self.performance_monitor.log_metrics({
-            'price_loss': losses['price_loss'].item(),
-            'signal_loss': losses['signal_loss'].item(),
-            'risk_loss': losses['risk_loss'].item(),
-            'total_loss': losses['total_loss'].item()
-        }, step=self.training_step)
-
-        return losses
-
-    def adapt_online(self, inputs, targets, adaptation_rate: float = 0.01):
-        """
-        Adapt model online with new data.
-
-        Args:
-            inputs: Input data
-            targets: Target data
-            adaptation_rate: Rate of adaptation
-        """
-        # Create a temporary optimizer with lower learning rate
-        temp_optimizer = torch.optim.Adam(
-            self.parameters(),
-            lr=adaptation_rate
-        )
-
-        # Single forward and backward pass
-        temp_optimizer.zero_grad()
-        outputs = self.forward(inputs)
-        losses = self.compute_loss(outputs, targets)
-        losses['total_loss'].backward()
-        temp_optimizer.step()
-
-        # Log adaptation
-        self.performance_monitor.log_metrics({
-            'adaptation_loss': losses['total_loss'].item()
-        }, step=self.training_step)
-
-    def save_checkpoint(self, path: str):
-        """
-        Save model checkpoint.
-
-        Args:
-            path: Path to save checkpoint
-        """
-        checkpoint = {
-            'model_state_dict': self.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'training_step': self.training_step,
-            'performance_metrics': self.performance_monitor.get_metrics(),
-            'config': self.config
-        }
-
-        torch.save(checkpoint, path)
-
-    def load_checkpoint(self, path: str):
-        """
-        Load model checkpoint.
-
-        Args:
-            path: Path to load checkpoint from
-        """
-        checkpoint = torch.load(path, map_location='cpu')
-
-        self.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.training_step = checkpoint['training_step']
-        self.performance_monitor.set_metrics(checkpoint['performance_metrics'])
+    def update_states(self, new_states):
+        """Update ensemble training states"""
+        self.states = new_states
 
 
-class AdaptiveNCAModel(nn.Module):
+def create_nca_loss_function(target_pattern, alpha_weight=1.0, rgb_weight=1.0):
     """
-    Adaptive NCA model that can grow and evolve over time.
-
-    Implements mechanisms for model growth, adaptation, and evolution
-    based on performance feedback.
-    """
-
-    def __init__(self, config):
-        """
-        Initialize adaptive NCA model.
-
-        Args:
-            config: Configuration object
-        """
-        super(AdaptiveNCAModel, self).__init__()
-        self.config = config
-        self.base_model = NCATradingModel(config)
-
-        # Adaptation parameters
-        self.growth_threshold = 0.5  # Performance threshold for growth
-        self.growth_rate = config.nca.adaptation_rate
-        self.mutation_rate = config.nca.mutation_rate
-        self.selection_pressure = config.nca.selection_pressure
-
-        # Evolution history
-        self.evolution_history = []
-        self.performance_history = []
-
-        # Current generation
-        self.generation = 0
-
-    def forward(self, x, evolution_steps: int = 10):
-        """
-        Forward pass of adaptive NCA model.
-
-        Args:
-            x: Input tensor
-            evolution_steps: Number of NCA evolution steps
-
-        Returns:
-            Model outputs
-        """
-        return self.base_model(x, evolution_steps)
-
-    def evaluate_performance(self, test_data):
-        """
-        Evaluate model performance on test data.
-
-        Args:
-            test_data: Test dataset
-
-        Returns:
-            Performance score
-        """
-        # Simple evaluation based on prediction accuracy
-        total_loss = 0
-        num_batches = 0
-
-        for batch in test_data:
-            inputs = batch['inputs']
-            targets = {
-                'price': batch['price'],
-                'signal': batch['signal'],
-                'risk': batch['risk']
-            }
-
-            outputs = self.base_model(inputs)
-            losses = self.base_model.compute_loss(outputs, targets)
-
-            total_loss += losses['total_loss'].item()
-            num_batches += 1
-
-        avg_loss = total_loss / num_batches
-        performance = 1.0 / (1.0 + avg_loss)  # Convert loss to performance score
-
-        return performance
-
-    def trigger_growth(self):
-        """Trigger model growth based on performance."""
-        self.generation += 1
-
-        # Add new NCA layer
-        new_layer = NCACell(
-            self.config.nca.state_dim,
-            self.config.nca.hidden_dim,
-            self.config.nca.kernel_size
-        )
-
-        # Initialize with small random weights
-        for param in new_layer.parameters():
-            param.data *= 0.1
-
-        self.base_model.nca_layers.append(new_layer)
-
-        # Log growth event
-        self.evolution_history.append({
-            'generation': self.generation,
-            'event': 'growth',
-            'timestamp': datetime.now(),
-            'num_layers': len(self.base_model.nca_layers)
-        })
-
-    def mutate_parameters(self):
-        """Apply random mutations to model parameters."""
-        for param in self.base_model.parameters():
-            if random.random() < self.mutation_rate:
-                # Add small random noise
-                param.data += torch.randn_like(param) * 0.01
-
-        # Log mutation event
-        self.evolution_history.append({
-            'generation': self.generation,
-            'event': 'mutation',
-            'timestamp': datetime.now(),
-            'mutation_rate': self.mutation_rate
-        })
-
-    def adapt_to_performance(self, performance):
-        """
-        Adapt model based on performance feedback.
-
-        Args:
-            performance: Current performance score
-        """
-        # Store performance
-        self.performance_history.append(performance)
-
-        # Keep history bounded
-        if len(self.performance_history) > 100:
-            self.performance_history = self.performance_history[-100:]
-
-        # Trigger growth if performance is below threshold
-        if performance < self.growth_threshold:
-            self.trigger_growth()
-
-        # Apply mutations with probability based on performance
-        mutation_prob = (1.0 - performance) * self.mutation_rate
-        if random.random() < mutation_prob:
-            self.mutate_parameters()
-
-    def get_evolution_summary(self):
-        """
-        Get summary of model evolution.
-
-        Returns:
-            Evolution summary dictionary
-        """
-        return {
-            'generation': self.generation,
-            'num_layers': len(self.base_model.nca_layers),
-            'performance_history': self.performance_history,
-            'evolution_history': self.evolution_history
-        }
-
-
-class JAXNCAModel:
-    """
-    JAX implementation of NCA model for TPU optimization.
-
-    Implements the NCA model using JAX/Flax for efficient training on TPUs.
-    """
-
-    def __init__(self, config):
-        """
-        Initialize JAX NCA model.
-
-        Args:
-            config: Configuration object
-        """
-        if not JAX_AVAILABLE:
-            raise ImportError("JAX is not available. Install JAX for TPU support.")
-
-        self.config = config
-        self.state_dim = config.nca.state_dim
-        self.hidden_dim = config.nca.hidden_dim
-        self.num_layers = config.nca.num_layers
-        self.kernel_size = config.nca.kernel_size
-
-        # JAX random key
-        self.rng = jax.random.PRNGKey(42)
-
-        # Initialize model
-        self.model = self._create_model()
-        self.params = self.model.init(self.rng, jnp.ones((1, 10, 20)))
-
-        # Optimizer
-        self.optimizer = optax.adam(
-            learning_rate=config.nca.learning_rate,
-            weight_decay=config.nca.weight_decay
-        )
-        self.opt_state = self.optimizer.init(self.params)
-
-    def _create_model(self):
-        """Create JAX NCA model."""
-        class NCACell(nn_flax.Module):
-            """JAX NCA cell implementation."""
-            state_dim: int
-            hidden_dim: int
-            kernel_size: int = 3
-
-            @nn_flax.compact
-            def __call__(self, x):
-                # Perception
-                x = nn_flax.Conv(
-                    features=self.hidden_dim,
-                    kernel_size=(self.kernel_size,),
-                    padding='SAME'
-                )(x)
-                x = nn_flax.relu(x)
-                x = nn_flax.Conv(
-                    features=self.hidden_dim,
-                    kernel_size=(self.kernel_size,),
-                    padding='SAME'
-                )(x)
-                x = nn_flax.relu(x)
-
-                # Update
-                x = nn_flax.Dense(features=self.state_dim)(x)
-                x = nn_flax.tanh(x)
-
-                return x
-
-        class NCAModel(nn_flax.Module):
-            """JAX NCA model implementation."""
-            state_dim: int
-            hidden_dim: int
-            num_layers: int
-            kernel_size: int = 3
-
-            @nn_flax.compact
-            def __call__(self, x, evolution_steps=10):
-                # Input projection
-                batch_size, seq_len, features = x.shape
-                x = x.reshape(batch_size, -1)
-                x = nn_flax.Dense(features=self.state_dim * 16)(x)
-                x = x.reshape(batch_size, self.state_dim, 16)
-
-                # NCA evolution
-                for _ in range(evolution_steps):
-                    for _ in range(self.num_layers):
-                        x = NCACell(
-                            state_dim=self.state_dim,
-                            hidden_dim=self.hidden_dim,
-                            kernel_size=self.kernel_size
-                        )(x)
-
-                # Output heads
-                price = nn_flax.Dense(features=1)(x.mean(axis=2))
-                signal = nn_flax.Dense(features=3)(x.mean(axis=2))
-                risk = nn_flax.sigmoid(nn_flax.Dense(features=1)(x.mean(axis=2)))
-
-                return {
-                    'price_prediction': price,
-                    'signal_probabilities': nn_flax.softmax(signal),
-                    'risk_probability': risk
-                }
-
-        return NCAModel(
-            state_dim=self.state_dim,
-            hidden_dim=self.hidden_dim,
-            num_layers=self.num_layers,
-            kernel_size=self.kernel_size
-        )
-
-    def forward(self, x, evolution_steps=10):
-        """
-        Forward pass of JAX NCA model.
-
-        Args:
-            x: Input tensor
-            evolution_steps: Number of NCA evolution steps
-
-        Returns:
-            Model outputs
-        """
-        return self.model.apply(self.params, x, evolution_steps)
-
-    def train_step(self, batch):
-        """
-        Perform a single training step.
-
-        Args:
-            batch: Batch of training data
-
-        Returns:
-            Dictionary with loss values
-        """
-        def loss_fn(params):
-            outputs = self.model.apply(params, batch['inputs'])
-            
-            # Compute losses
-            price_loss = jnp.mean((outputs['price_prediction'] - batch['price']) ** 2)
-            signal_loss = optax.softmax_cross_entropy_with_integer_labels(
-                outputs['signal_probabilities'], batch['signal']
-            ).mean()
-            risk_loss = optax.binary_cross_entropy(
-                outputs['risk_probability'].squeeze(), batch['risk']
-            ).mean()
-            
-            total_loss = price_loss + signal_loss + risk_loss
-            
-            return total_loss, {
-                'price_loss': price_loss,
-                'signal_loss': signal_loss,
-                'risk_loss': risk_loss
-            }
-
-        # Compute gradients
-        (loss, losses), grads = jax.value_and_grad(loss_fn, has_aux=True)(self.params)
-
-        # Update parameters
-        updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
-        self.params = optax.apply_updates(self.params, updates)
-
-        # Convert to Python scalars
-        losses = jax.tree_map(lambda x: float(x), losses)
-
-        return losses
-
-
-class NCAModelCache:
-    """
-    Cache for NCA models to avoid repeated initialization.
-
-    Provides efficient loading and caching of NCA models.
-    """
-
-    def __init__(self, cache_dir: str = "model_cache"):
-        """
-        Initialize model cache.
-
-        Args:
-            cache_dir: Directory to store cached models
-        """
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(exist_ok=True)
-        self.cache = {}
-
-    def get_model(self, config, model_id: str = None):
-        """
-        Get model from cache or create new one.
-
-        Args:
-            config: Configuration object
-            model_id: Unique model identifier
-
-        Returns:
-            NCA model instance
-        """
-        if model_id is None:
-            # Generate ID from config
-            model_id = str(hash(str(config)))
-
-        # Check cache
-        if model_id in self.cache:
-            return self.cache[model_id]
-
-        # Check if model is saved to disk
-        model_path = self.cache_dir / f"{model_id}.pt"
-        if model_path.exists():
-            model = NCATradingModel(config)
-            model.load_checkpoint(str(model_path))
-            self.cache[model_id] = model
-            return model
-
-        # Create new model
-        model = NCATradingModel(config)
-        self.cache[model_id] = model
-
-        return model
-
-    def save_model(self, model, model_id: str = None):
-        """
-        Save model to cache.
-
-        Args:
-            model: Model to save
-            model_id: Unique model identifier
-        """
-        if model_id is None:
-            # Generate ID from config
-            model_id = str(hash(str(model.config)))
-
-        # Save to disk
-        model_path = self.cache_dir / f"{model_id}.pt"
-        model.save_checkpoint(str(model_path))
-
-        # Update cache
-        self.cache[model_id] = model
-
-
-# Utility functions
-def create_nca_model(config, adaptive: bool = False):
-    """
-    Create NCA model based on configuration.
-
+    Create loss function for NCA training
     Args:
-        config: Configuration object
-        adaptive: Whether to create adaptive model
-
+        target_pattern: Target pattern to grow
+        alpha_weight: Weight for alpha channel loss
+        rgb_weight: Weight for RGB channel loss
     Returns:
-        NCA model instance
+        loss_function: Loss function for training
     """
-    if detect_tpu_availability() and config.training.use_jax:
-        # Use JAX implementation for TPU
-        return JAXNCAModel(config)
-    elif adaptive:
-        # Create adaptive model
-        return AdaptiveNCAModel(config)
-    else:
-        # Create standard model
-        return NCATradingModel(config)
+    def loss_fn(params, model, grid, rng_key):
+        """Compute loss between evolved grid and target pattern"""
+        # Evolve grid
+        evolved_grid = model.apply(params, grid, rng_key, training=False)
+
+        # Compute MSE loss for each channel
+        alpha_loss = jnp.mean(
+            (evolved_grid[..., 3:4] - target_pattern[..., 3:4]) ** 2
+        )
+        rgb_loss = jnp.mean(
+            (evolved_grid[..., :3] - target_pattern[..., :3]) ** 2
+        )
+
+        total_loss = alpha_weight * alpha_loss + rgb_weight * rgb_loss
+
+        return total_loss, {
+            "alpha_loss": alpha_loss,
+            "rgb_loss": rgb_loss,
+            "total_loss": total_loss
+        }
+
+    return loss_fn
 
 
-def load_nca_model(path: str, config):
+def create_sample_pool(initial_grid, pool_size=1024):
     """
-    Load NCA model from checkpoint.
-
+    Create sample pool for NCA training
     Args:
-        path: Path to checkpoint
-        config: Configuration object
-
+        initial_grid: Initial NCA grid
+        pool_size: Size of sample pool
     Returns:
-        NCA model instance
+        sample_pool: Array of grids for training
     """
-    if detect_tpu_availability() and config.training.use_jax:
-        # Load JAX model
-        model = JAXNCAModel(config)
-        # JAX model loading would be implemented here
-        return model
-    else:
-        # Load PyTorch model
-        model = NCATradingModel(config)
-        model.load_checkpoint(path)
-        return model
+    pool = jnp.tile(initial_grid[0:1], (pool_size, 1, 1, 1))
+    return pool
 
 
-def save_nca_model(model, path: str):
+def apply_damage(grid, damage_prob=0.1, max_damage_radius=5):
     """
-    Save NCA model to checkpoint.
-
+    Apply random damage to NCA grid for robustness training
     Args:
-        model: Model to save
-        path: Path to save checkpoint
+        grid: Input NCA grid
+        damage_prob: Probability of applying damage
+        max_damage_radius: Maximum radius of damage
+    Returns:
+        damaged_grid: Grid with applied damage
     """
-    if isinstance(model, JAXNCAModel):
-        # Save JAX model
-        # JAX model saving would be implemented here
-        pass
+    batch, height, width, channels = grid.shape
+    rng_key = jrand.PRNGKey(0)
+
+    # Randomly decide to apply damage
+    should_damage = jrand.bernoulli(rng_key, p=damage_prob)
+
+    if should_damage:
+        # Random center for damage
+        rng_key, *keys = jrand.split(rng_key, 4)
+        center_y = jrand.randint(keys[0], (), 0, height)
+        center_x = jrand.randint(keys[1], (), 0, width)
+        radius = jrand.randint(keys[2], (), 1, max_damage_radius + 1)
+
+        # Create damage mask
+        y_coords, x_coords = jnp.meshgrid(
+            jnp.arange(height),
+            jnp.arange(width),
+            indexing='ij'
+        )
+
+        distance = jnp.sqrt(
+            (y_coords - center_y) ** 2 + (x_coords - center_x) ** 2
+        )
+        damage_mask = (distance <= radius).astype(jnp.float32)
+        damage_mask = damage_mask[..., None]  # Add channel dimension
+
+        # Apply damage (set to zeros)
+        damaged_grid = grid * (1 - damage_mask)
     else:
-        # Save PyTorch model
-        model.save_checkpoint(path)
+        damaged_grid = grid
+
+    return damaged_grid
 
 
-if __name__ == "__main__":
-    # Example usage
-    from config import ConfigManager
+# TPU-specific utilities
+def shard_grid(grid, mesh):
+    """
+    Shard grid across TPU devices
+    Args:
+        grid: Input grid [batch, height, width, channels]
+        mesh: JAX device mesh
+    Returns:
+        sharded_grid: Sharded grid across devices
+    """
+    sharding = NamedSharding(mesh, P('tp', None))
+    sharded_grid = jax.device_put(grid, sharding)
+    return sharded_grid
 
-    print("NCA Trading Bot - Model Demo")
-    print("=" * 40)
 
-    config = ConfigManager()
+def create_tpu_mesh(device_count=8):
+    """
+    Create TPU device mesh for distributed computing
+    Args:
+        device_count: Number of TPU devices
+    Returns:
+        mesh: Device mesh for sharding
+    """
+    devices = jax.devices()[:device_count]
+    mesh = Mesh(jax.device_mesh((device_count,)), ('tp',))
+    return mesh
 
-    # Create model
-    model = create_nca_model(config, adaptive=True)
-    print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
 
-    # Create sample input
-    batch_size, seq_len, features = 4, 10, 20
-    sample_input = torch.randn(batch_size, seq_len, features)
+# Training utilities
+@jit
+def train_nca_step(state, model, batch, rng_key, loss_fn):
+    """
+    Single training step for NCA
+    Args:
+        state: Training state
+        model: NCA model
+        batch: Training batch
+        rng_key: Random key
+        loss_fn: Loss function
+    Returns:
+        new_state: Updated training state
+        metrics: Training metrics
+    """
+    grad_fn = value_and_grad(loss_fn, has_aux=True)
+    (loss, aux), grads = grad_fn(state.params, model, batch, rng_key)
 
-    # Forward pass
-    outputs = model(sample_input)
-    print(f"Output keys: {list(outputs.keys())}")
+    new_state = state.apply_gradients(grads=grads)
 
-    # Create sample targets
-    targets = {
-        'price': torch.randn(batch_size, 1),
-        'signal': torch.randint(0, 3, (batch_size,)),
-        'risk': torch.rand(batch_size)
+    metrics = {
+        "loss": loss,
+        **aux
     }
 
-    # Compute loss
-    losses = model.compute_loss(outputs, targets)
-    print(f"Losses: {losses}")
-
-    print("Model demo completed successfully!")
+    return new_state, metrics

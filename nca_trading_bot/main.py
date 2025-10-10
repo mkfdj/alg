@@ -1,478 +1,294 @@
 """
-NCA Trading Bot Main Entry Point
-
-This module provides the main entry point for the Neural Cellular Automata
-trading bot, including command-line interface, configuration management,
-and training/inference orchestration.
+Main application entry point for NCA Trading Bot
 """
 
 import argparse
-import asyncio
-import logging
 import os
 import sys
-import time
-from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+import jax
+import jax.numpy as jnp
+from typing import List, Optional
 
-import numpy as np
-import pandas as pd
-import yaml
-from dotenv import load_dotenv
+# Add parent directory to path for imports
+sys.path.append(str(Path(__file__).parent.parent))
 
-# Add project root to path
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
-
-from config import ConfigManager, get_config, reload_config, detect_tpu_availability, get_tpu_device_count
-from data_handler import DataHandler
-from nca_model import create_nca_model, load_nca_model, save_nca_model
-from trainer import TrainingManager, PPOTrainer, JAXPPOTrainer, RealTimeStreamingTrainer
-from trader import TradingAgent, TradingEnvironment
-from utils import PerformanceMonitor, RiskCalculator, LoggerUtils
-
-# Load environment variables
-load_dotenv()
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('nca_trading_bot.log'),
-        logging.StreamHandler()
-    ]
+from nca_trading_bot import (
+    Config, AdaptiveNCA, DataHandler, TradingEnvironment,
+    PPOAgent, TradingBot, CombinedTrainer
 )
-logger = logging.getLogger(__name__)
-
-
-class NCATradingBot:
-    """
-    Main NCA Trading Bot class.
-
-    Orchestrates all components of the trading system including data handling,
-    model training, and live trading.
-    """
-
-    def __init__(self, config_path: Optional[str] = None):
-        """
-        Initialize NCA Trading Bot.
-
-        Args:
-            config_path: Path to configuration file
-        """
-        # Load configuration
-        self.config = ConfigManager(config_path)
-        self.logger = LoggerUtils.setup_logger('NCA_Trading_Bot', self.config.system.log_level)
-
-        # Initialize components
-        self.data_handler = DataHandler()
-        self.model = None
-        self.trainer = None
-        self.trading_agent = None
-        self.performance_monitor = PerformanceMonitor()
-        self.risk_calculator = RiskCalculator(self.config)
-
-        # Training state
-        self.is_training = False
-        self.is_trading = False
-
-        # Initialize hardware
-        self._initialize_hardware()
-
-        self.logger.info("NCA Trading Bot initialized")
-
-    def _initialize_hardware(self):
-        """Initialize hardware configuration and optimizations."""
-        # Detect available hardware
-        device = self.config.system.device
-        if device == "auto":
-            if detect_tpu_availability():
-                device = "tpu"
-                self.config.system.device = "tpu"
-                self.logger.info(f"TPU detected with {get_tpu_device_count()} cores")
-            elif torch.cuda.is_available():
-                device = "cuda"
-                self.config.system.device = "cuda"
-                self.logger.info(f"CUDA detected with {torch.cuda.device_count()} GPUs")
-            else:
-                device = "cpu"
-                self.config.system.device = "cpu"
-                self.logger.info("Using CPU for computation")
-
-        # Set up mixed precision if available
-        if device == "cuda" and torch.cuda.is_available():
-            self.config.training.use_mixed_precision = True  # TPU supports bfloat16
-            self.logger.info("Mixed precision enabled for CUDA")
-        elif device == "tpu":
-            self.config.training.use_mixed_precision = True  # TPU supports bfloat16
-            self.logger.info("Mixed precision enabled for TPU")
-
-    def create_model(self, adaptive: bool = False, load_path: Optional[str] = None):
-        """
-        Create or load NCA model.
-
-        Args:
-            adaptive: Whether to create an adaptive model
-            load_path: Path to load model from
-        """
-        if load_path and os.path.exists(load_path):
-            self.logger.info(f"Loading model from {load_path}")
-            self.model = load_nca_model(load_path, self.config)
-        else:
-            self.logger.info("Creating new NCA model")
-            self.model = create_nca_model(self.config, adaptive=adaptive)
-
-        self.logger.info(f"Model created with {sum(p.numel() for p in self.model.parameters())} parameters")
-
-    def setup_trainer(self):
-        """Set up training manager."""
-        self.trainer = TrainingManager(self.config)
-        self.trainer.create_model(adaptive=True)
-        self.model = self.trainer.model
-
-        # Initialize JAX PPO for real-time learning
-        self.trainer.initialize_jax_ppo(
-            observation_dim=self.config.data.sequence_length,
-            action_dim=3  # buy, hold, sell
-        )
-
-        self.logger.info("Training manager initialized")
-
-    def setup_trading_agent(self):
-        """Set up trading agent."""
-        if self.model is None:
-            raise ValueError("Model must be created before setting up trading agent")
-
-        self.trading_agent = TradingAgent(self.model, self.config)
-        self.logger.info("Trading agent initialized")
-
-    async def train_offline(self, data_path: Optional[str] = None, num_epochs: int = 100):
-        """
-        Perform offline training on historical data.
-
-        Args:
-            data_path: Path to training data
-            num_epochs: Number of training epochs
-        """
-        if self.trainer is None:
-            self.setup_trainer()
-
-        # Load training data
-        if data_path:
-            data = pd.read_csv(data_path)
-        else:
-            # Fetch data using data handler
-            data = await self.data_handler.get_multiple_tickers_data(
-                self.config.data.tickers,
-                start_date='2020-01-01',
-                end_date='2023-01-01'
-            )
-
-        self.logger.info(f"Loaded training data with shape {data.shape}")
-
-        # Start offline training
-        self.is_training = True
-        await self.trainer.train_offline(data, num_epochs)
-        self.is_training = False
-
-        self.logger.info("Offline training completed")
-
-    async def train_streaming(self, symbols: List[str]):
-        """
-        Perform real-time streaming training.
-
-        Args:
-            symbols: List of symbols to stream and train on
-        """
-        if self.trainer is None:
-            self.setup_trainer()
-
-        self.logger.info(f"Starting streaming training for symbols: {symbols}")
-
-        # Start streaming training
-        self.is_training = True
-        await self.trainer.train_streaming(symbols)
-        self.is_training = False
-
-        self.logger.info("Streaming training completed")
-
-    async def trade_live(self, symbols: List[str], duration_minutes: int = 60):
-        """
-        Perform live trading.
-
-        Args:
-            symbols: List of symbols to trade
-            duration_minutes: Duration of trading session in minutes
-        """
-        if self.trading_agent is None:
-            self.setup_trading_agent()
-
-        self.logger.info(f"Starting live trading for symbols: {symbols}")
-
-        # Start live trading
-        self.is_trading = True
-        end_time = datetime.now() + timedelta(minutes=duration_minutes)
-
-        while datetime.now() < end_time and self.is_trading:
-            try:
-                # Make trading decisions for each symbol
-                for symbol in symbols:
-                    # Get recent market data
-                    market_data = await self.data_handler.get_historical_data(
-                        symbol,
-                        start_date=(datetime.now() - timedelta(hours=1)).strftime('%Y-%m-%d'),
-                        end_date=datetime.now().strftime('%Y-%m-%d'),
-                        interval='5m'
-                    )
-
-                    if not market_data.empty:
-                        # Make trading decision
-                        decision = self.trading_agent.make_decision(market_data)
-
-                        # Execute trade if confidence is high enough
-                        if decision['confidence'] > self.config.trading.confidence_threshold:
-                            await self.trading_agent.execute_trade(symbol, decision)
-
-                # Wait before next iteration
-                await asyncio.sleep(60)  # Check every minute
-
-            except Exception as e:
-                self.logger.error(f"Error in live trading: {e}")
-                await asyncio.sleep(10)  # Wait before retry
-
-        self.is_trading = False
-        self.logger.info("Live trading completed")
-
-    async def evaluate_model(self, test_data_path: Optional[str] = None):
-        """
-        Evaluate model performance on test data.
-
-        Args:
-            test_data_path: Path to test data
-        """
-        if self.model is None:
-            raise ValueError("Model must be loaded before evaluation")
-
-        # Load test data
-        if test_data_path:
-            test_data = pd.read_csv(test_data_path)
-        else:
-            # Fetch test data using data handler
-            test_data = await self.data_handler.get_multiple_tickers_data(
-                self.config.data.tickers,
-                start_date='2023-01-01',
-                end_date='2023-06-01'
-            )
-
-        self.logger.info(f"Loaded test data with shape {test_data.shape}")
-
-        # Create evaluation environment
-        env = TradingEnvironment(test_data, self.config)
-
-        # Run evaluation
-        total_reward = 0
-        num_episodes = 10
-
-        for episode in range(num_episodes):
-            state, _ = env.reset()
-            episode_reward = 0
-            done = False
-
-            while not done:
-                # Convert state to tensor
-                state_tensor = torch.FloatTensor(state).unsqueeze(0)
-
-                # Get action from model
-                with torch.no_grad():
-                    outputs = self.model(state_tensor)
-                    action_probs = torch.softmax(outputs['signal_probabilities'], dim=1)
-                    action = torch.argmax(action_probs, dim=1).item()
-
-                # Take action in environment
-                next_state, reward, terminated, truncated, _ = env.step([action, 5])
-                done = terminated or truncated
-
-                episode_reward += reward
-                state = next_state
-
-            total_reward += episode_reward
-            self.logger.debug(f"Episode {episode} reward: {episode_reward:.2f}")
-
-        avg_reward = total_reward / num_episodes
-        self.logger.info(f"Average reward over {num_episodes} episodes: {avg_reward:.2f}")
-
-        return avg_reward
-
-    async def run_backtest(self, start_date: str, end_date: str, symbols: List[str]):
-        """
-        Run backtest on historical data.
-
-        Args:
-            start_date: Start date for backtest
-            end_date: End date for backtest
-            symbols: List of symbols to backtest
-        """
-        if self.trading_agent is None:
-            self.setup_trading_agent()
-
-        self.logger.info(f"Running backtest from {start_date} to {end_date}")
-
-        # Load historical data
-        backtest_data = await self.data_handler.get_multiple_tickers_data(
-            symbols,
-            start_date=start_date,
-            end_date=end_date
-        )
-
-        # Run backtest
-        results = await self.trading_agent.run_backtest(backtest_data)
-
-        # Log results
-        self.logger.info(f"Backtest completed with results: {results}")
-
-        return results
-
-    def save_model(self, path: Optional[str] = None):
-        """
-        Save model to disk.
-
-        Args:
-            path: Path to save model
-        """
-        if self.model is None:
-            raise ValueError("No model to save")
-
-        if path is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = self.config.system.model_dir / f"nca_model_{timestamp}.pt"
-
-        save_nca_model(self.model, path)
-        self.logger.info(f"Model saved to {path}")
-
-    def get_performance_report(self) -> Dict:
-        """
-        Get performance report.
-
-        Returns:
-            Performance report dictionary
-        """
-        if self.trading_agent:
-            return self.trading_agent.get_performance_report()
-        elif self.trainer:
-            return self.trainer.get_training_summary()
-        else:
-            return {"status": "No trading or training activity"}
-
-
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='NCA Trading Bot')
-    parser.add_argument('--config', type=str, help='Path to configuration file')
-    parser.add_argument('--mode', type=str, choices=['train', 'trade', 'evaluate', 'backtest'],
-                        default='train', help='Operation mode')
-    parser.add_argument('--data', type=str, help='Path to data file')
-    parser.add_argument('--model', type=str, help='Path to model file')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs')
-    parser.add_argument('--symbols', type=str, nargs='+', default=['AAPL', 'MSFT', 'GOOGL'],
-                        help='Symbols to trade or train on')
-    parser.add_argument('--start-date', type=str, help='Start date for backtest (YYYY-MM-DD)')
-    parser.add_argument('--end-date', type=str, help='End date for backtest (YYYY-MM-DD)')
-    parser.add_argument('--duration', type=int, default=60, help='Trading duration in minutes')
-    parser.add_argument('--adaptive', action='store_true', help='Use adaptive model')
-    parser.add_argument('--streaming', action='store_true', help='Use streaming training')
-    parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
-
-    return parser.parse_args()
-
-
-async def main():
-    """Main entry point."""
-    # Parse arguments
-    args = parse_args()
-
-    # Set up logging level
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    # Create bot
-    bot = NCATradingBot(args.config)
+
+
+def setup_jax_environment(config: Config):
+    """Setup JAX environment for TPU/GPU/CPU"""
+    print("Setting up JAX environment...")
+
+    # Configure JAX
+    jax.config.update("jax_enable_x64", config.jax_enable_x64)
+    jax.config.update("jax_platform_name", config.jax_platform)
+    jax.config.update("jax_debug_nans", config.jax_debug_nans)
+
+    # Set memory fraction
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(config.jax_memory_fraction)
+
+    # Check available devices
+    devices = jax.devices()
+    print(f"Available devices: {len(devices)} x {devices[0].device_kind}")
+
+    if config.jax_platform == "tpu":
+        print(f"TPU configuration: {config.tpu_device_count} chips")
+        # Initialize distributed training if needed
+        try:
+            jax.distributed.initialize()
+            print("Distributed training initialized")
+        except Exception as e:
+            print(f"Distributed training initialization failed: {e}")
+
+    return devices
+
+
+def load_data(config: Config, datasets: Optional[List[str]] = None) -> dict:
+    """Load training data"""
+    print("Loading training data...")
+
+    data_handler = DataHandler(config)
+    data = {}
+
+    if datasets is None:
+        datasets = ["kaggle_stock_market", "yahoo_finance"]
+
+    for dataset_name in datasets:
+        try:
+            print(f"Loading dataset: {dataset_name}")
+            dataset_data = data_handler.load_kaggle_dataset(dataset_name)
+            data.update(dataset_data)
+            print(f"Loaded {len(dataset_data)} tickers from {dataset_name}")
+        except Exception as e:
+            print(f"Error loading {dataset_name}: {e}")
+
+    # Add technical indicators
+    print("Adding technical indicators...")
+    for ticker in data:
+        try:
+            data[ticker] = data_handler.add_technical_indicators(data[ticker])
+        except Exception as e:
+            print(f"Error adding indicators for {ticker}: {e}")
+
+    print(f"Total data loaded: {len(data)} tickers")
+    return data, data_handler
+
+
+def run_training(config: Config, args):
+    """Run training pipeline"""
+    print("=== NCA Trading Bot Training ===")
+
+    # Setup environment
+    devices = setup_jax_environment(config)
+
+    # Validate configuration
+    if not config.validate():
+        print("Configuration validation failed!")
+        return
+
+    # Load data
+    data, data_handler = load_data(config, args.datasets)
+
+    if not data:
+        print("No data loaded. Please check dataset configuration.")
+        return
+
+    # Create combined trainer
+    trainer = CombinedTrainer(config)
+
+    # Run training
+    trainer.train(
+        nca_iterations=args.nca_iterations,
+        ppo_iterations=args.ppo_iterations
+    )
+
+    # Evaluate final model
+    results = trainer.evaluate(num_episodes=args.eval_episodes)
+    print("\n=== Final Evaluation Results ===")
+    for key, value in results.items():
+        print(f"{key}: {value:.4f}")
+
+    print("Training completed!")
+
+
+def run_backtesting(config: Config, args):
+    """Run backtesting with trained model"""
+    print("=== NCA Trading Bot Backtesting ===")
+
+    # Setup environment
+    setup_jax_environment(config)
+
+    # Load data
+    data, data_handler = load_data(config, args.datasets)
+
+    # Create trading bot
+    bot = TradingBot(config)
+
+    # Load checkpoint if specified
+    if args.checkpoint:
+        try:
+            bot.ppo_trainer.load_checkpoint(args.checkpoint)
+            print(f"Loaded checkpoint: {args.checkpoint}")
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}")
+
+    # Run backtesting
+    results = bot.evaluate(num_episodes=args.eval_episodes)
+
+    print("\n=== Backtesting Results ===")
+    print(f"Average Return: {results['avg_return']:.2f}%")
+    print(f"Average Sharpe Ratio: {results['avg_sharpe']:.2f}")
+    print(f"Average Max Drawdown: {results['avg_drawdown']:.2f}")
+    print(f"Win Rate: {results.get('win_rate', 0):.2%}")
+
+
+def run_live_trading(config: Config, args):
+    """Run live trading"""
+    print("=== NCA Trading Bot Live Trading ===")
+
+    # Safety check for live trading
+    if not args.paper_mode:
+        confirm = input("⚠️  WARNING: This will start LIVE trading with REAL money!\n"
+                       "Type 'I UNDERSTAND THE RISKS' to continue: ")
+        if confirm != "I UNDERSTAND THE RISKS":
+            print("Live trading cancelled for your safety.")
+            return
+
+    # Setup environment
+    setup_jax_environment(config)
+
+    # Load checkpoint
+    if not args.checkpoint:
+        print("Error: Checkpoint required for live trading")
+        return
+
+    # Create and configure trading bot
+    bot = TradingBot(config)
 
     try:
-        if args.mode == 'train':
-            # Load or create model
-            bot.create_model(adaptive=args.adaptive, load_path=args.model)
+        bot.ppo_trainer.load_checkpoint(args.checkpoint)
+        print(f"Loaded checkpoint: {args.checkpoint}")
+    except Exception as e:
+        print(f"Error loading checkpoint: {e}")
+        return
 
-            # Set up trainer
-            bot.setup_trainer()
+    # Start live trading
+    bot.start_live_trading(paper_mode=args.paper_mode)
 
-            if args.streaming:
-                # Streaming training
-                await bot.train_streaming(args.symbols)
-            else:
-                # Offline training
-                await bot.train_offline(args.data, args.epochs)
 
-            # Save model
-            bot.save_model()
+def run_data_analysis(config: Config, args):
+    """Run data analysis and visualization"""
+    print("=== Data Analysis ===")
 
-        elif args.mode == 'trade':
-            # Load model
-            bot.create_model(load_path=args.model)
+    # Load data
+    data, data_handler = load_data(config, args.datasets)
 
-            # Set up trading agent
-            bot.setup_trading_agent()
+    if not data:
+        print("No data loaded")
+        return
 
-            # Start live trading
-            await bot.trade_live(args.symbols, args.duration)
+    # Print data statistics
+    print(f"\nData Statistics:")
+    print(f"Total tickers: {len(data)}")
 
-            # Print performance report
-            report = bot.get_performance_report()
-            print("Performance Report:")
-            for key, value in report.items():
-                print(f"  {key}: {value}")
+    total_data_points = sum(len(df) for df in data.values())
+    print(f"Total data points: {total_data_points:,}")
 
-        elif args.mode == 'evaluate':
-            # Load model
-            bot.create_model(load_path=args.model)
+    # Date range
+    all_dates = []
+    for ticker, df in data.items():
+        all_dates.extend(df.index.tolist())
 
-            # Evaluate model
-            avg_reward = await bot.evaluate_model(args.data)
-            print(f"Average reward: {avg_reward:.2f}")
+    if all_dates:
+        min_date = min(all_dates)
+        max_date = max(all_dates)
+        print(f"Date range: {min_date} to {max_date}")
 
-        elif args.mode == 'backtest':
-            # Load model
-            bot.create_model(load_path=args.model)
+    # Sample tickers info
+    print(f"\nSample tickers:")
+    for ticker in list(data.keys())[:5]:
+        df = data[ticker]
+        print(f"  {ticker}: {len(df)} days, "
+              f"${df['close'].iloc[-1]:.2f} (latest), "
+              f"{((df['close'].iloc[-1] / df['close'].iloc[0] - 1) * 100):.2f}% return")
 
-            # Set up trading agent
-            bot.setup_trading_agent()
+    # Create sequences for NCA
+    sequences, targets = data_handler.create_sequences(data)
+    print(f"\nNCA Sequences:")
+    print(f"  Number of sequences: {len(sequences):,}")
+    print(f"  Sequence length: {config.data_sequence_length}")
+    print(f"  Features per sequence: {sequences.shape[2] if len(sequences) > 0 else 0}")
 
-            # Run backtest
-            if not args.start_date or not args.end_date:
-                print("Start date and end date are required for backtest")
-                return
+    print("Data analysis completed!")
 
-            results = await bot.run_backtest(args.start_date, args.end_date, args.symbols)
-            print("Backtest Results:")
-            for key, value in results.items():
-                print(f"  {key}: {value}")
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(description="NCA Trading Bot")
+    parser.add_argument("--mode", choices=["train", "backtest", "live", "analyze"],
+                       default="train", help="Running mode")
+    parser.add_argument("--config", type=str, help="Configuration file path")
+    parser.add_argument("--datasets", nargs="+",
+                       default=["kaggle_stock_market", "yahoo_finance"],
+                       help="Datasets to use")
+    parser.add_argument("--tickers", nargs="+", help="Specific tickers to trade")
+    parser.add_argument("--nca-iterations", type=int, default=1000,
+                       help="Number of NCA training iterations")
+    parser.add_argument("--ppo-iterations", type=int, default=1000,
+                       help="Number of PPO training iterations")
+    parser.add_argument("--eval-episodes", type=int, default=100,
+                       help="Number of evaluation episodes")
+    parser.add_argument("--checkpoint", type=str, help="Checkpoint path to load")
+    parser.add_argument("--paper-mode", action="store_true", default=True,
+                       help="Use paper trading (default)")
+    parser.add_argument("--live-mode", action="store_true",
+                       help="Use live trading (requires explicit confirmation)")
+
+    args = parser.parse_args()
+
+    # Load configuration
+    config = Config()
+
+    # Override with command line arguments
+    if args.tickers:
+        config.top_tickers = args.tickers
+
+    if args.live_mode:
+        args.paper_mode = False
+
+    # Set environment variables for API keys
+    if not os.getenv("ALPACA_PAPER_API_KEY"):
+        print("Warning: ALPACA_PAPER_API_KEY environment variable not set")
+        print("Set it using: export ALPACA_PAPER_API_KEY='your_key'")
+
+    if not os.getenv("ALPACA_PAPER_SECRET_KEY"):
+        print("Warning: ALPACA_PAPER_SECRET_KEY environment variable not set")
+        print("Set it using: export ALPACA_PAPER_SECRET_KEY='your_secret'")
+
+    try:
+        if args.mode == "train":
+            run_training(config, args)
+        elif args.mode == "backtest":
+            run_backtesting(config, args)
+        elif args.mode == "live":
+            run_live_trading(config, args)
+        elif args.mode == "analyze":
+            run_data_analysis(config, args)
+        else:
+            print(f"Unknown mode: {args.mode}")
+            sys.exit(1)
 
     except KeyboardInterrupt:
-        logger.info("Interrupted by user")
+        print("\nOperation cancelled by user")
+        sys.exit(0)
     except Exception as e:
-        logger.error(f"Error: {e}")
-        raise
-    finally:
-        # Clean up
-        if bot.is_training:
-            bot.trainer.stop_training()
-        if bot.is_trading:
-            bot.is_trading = False
-
-        logger.info("NCA Trading Bot shutdown complete")
+        print(f"Error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    # Run main function
-    asyncio.run(main())
+    main()

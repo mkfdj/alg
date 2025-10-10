@@ -1,28 +1,50 @@
-numpy
-pandas
-torch
-torch-xla
-jax
-jaxlib
-flax
-optax
-yfinance
-alpaca-py
-gymnasium
-scikit-learn
-tensorboard
-PyYAML
-psutil
-GPUtil
-kaggle
-kagglehub
-requests
-# JAX TPU v5e-8 specific dependencies
-jax[tpu]>=0.4.0
-libtpu-nightly
-# Additional JAX ecosystem for TPU optimization
-dm-haiku
-jmp  # Mixed precision library for JAX
-chex  # Testing and debugging utilities for JAX
-wandb
-pytest
+# Core ML/Tensor Processing
+jax[tpu]>=0.4.35
+flax>=0.8.0
+optax>=0.2.0
+chex>=0.1.85
+dm-haiku>=0.0.10
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+ta>=0.10.2
+yfinance>=0.2.28
+
+# Trading APIs
+alpaca-py>=0.8.0
+alpaca-trade-api>=3.1.0
+websocket-client>=1.6.0
+
+# Reinforcement Learning
+gymnasium>=0.29.0
+stable-baselines3>=2.3.0
+ray[rllib]>=2.8.0
+
+# Utilities
+tqdm>=4.66.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+wandb>=0.16.0
+tensorboard>=2.15.0
+
+# Configuration
+pydantic>=2.5.0
+python-dotenv>=1.0.0
+
+# Development/Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+black>=23.11.0
+isort>=5.12.0
+flake8>=6.1.0
+
+# Jupyter/Kaggle Support
+jupyter>=1.0.0
+ipywidgets>=8.1.0
+
+# Optional: Advanced features
+# transformers>=4.35.0  # For sentiment analysis
+# datasets>=2.15.0      # For dataset management
+# accelerate>=0.24.0    # For distributed training
