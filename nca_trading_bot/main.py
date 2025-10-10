@@ -31,18 +31,19 @@ def setup_jax_environment(config: Config):
     # Set memory fraction
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(config.jax_memory_fraction)
 
-    # Check available devices
-    devices = jax.devices()
-    print(f"Available devices: {len(devices)} x {devices[0].device_kind}")
-
+    # Initialize distributed training FIRST for TPU
     if config.jax_platform == "tpu":
         print(f"TPU configuration: {config.tpu_device_count} chips")
-        # Initialize distributed training if needed
+        # Initialize distributed training before any other JAX calls
         try:
             jax.distributed.initialize()
             print("Distributed training initialized")
         except Exception as e:
             print(f"Distributed training initialization failed: {e}")
+
+    # Check available devices
+    devices = jax.devices()
+    print(f"Available devices: {len(devices)} x {devices[0].device_kind}")
 
     return devices
 
@@ -85,8 +86,8 @@ def run_training(config: Config, args):
     # Setup environment
     devices = setup_jax_environment(config)
 
-    # Validate configuration
-    if not config.validate():
+    # Validate configuration (don't require API keys for training/demo)
+    if not config.validate(require_api_keys=False):
         print("Configuration validation failed!")
         return
 
@@ -120,7 +121,7 @@ def run_backtesting(config: Config, args):
     print("=== NCA Trading Bot Backtesting ===")
 
     # Setup environment
-    setup_jax_environment(config)
+    devices = setup_jax_environment(config)
 
     # Load data
     data, data_handler = load_data(config, args.datasets)
@@ -159,7 +160,7 @@ def run_live_trading(config: Config, args):
             return
 
     # Setup environment
-    setup_jax_environment(config)
+    devices = setup_jax_environment(config)
 
     # Load checkpoint
     if not args.checkpoint:
@@ -183,6 +184,9 @@ def run_live_trading(config: Config, args):
 def run_data_analysis(config: Config, args):
     """Run data analysis and visualization"""
     print("=== Data Analysis ===")
+
+    # Setup environment
+    devices = setup_jax_environment(config)
 
     # Load data
     data, data_handler = load_data(config, args.datasets)

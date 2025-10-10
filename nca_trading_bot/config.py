@@ -232,7 +232,7 @@ class Config:
 
         return config
 
-    def validate(self) -> bool:
+    def validate(self, require_api_keys: bool = False) -> bool:
         """Validate configuration settings"""
         errors = []
 
@@ -248,9 +248,14 @@ class Config:
         if self.nca_learning_rate <= 0:
             errors.append("Learning rate must be positive")
 
-        # Validate Alpaca configuration
-        if not self.alpaca_paper_api_key:
-            errors.append("Alpaca paper API key not configured")
+        # Validate Alpaca configuration (only if required)
+        if require_api_keys:
+            try:
+                api_config = self.get_alpaca_credentials()
+                if not api_config.get("api_key"):
+                    errors.append("Alpaca paper API key not configured")
+            except ValueError as e:
+                errors.append(f"Alpaca configuration error: {e}")
 
         if errors:
             print("Configuration validation errors:")
