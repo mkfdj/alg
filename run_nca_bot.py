@@ -19,6 +19,15 @@ def main():
         print("Make sure you're running this from the correct directory")
         return
 
+    # Install kaggle if not available
+    try:
+        import kaggle
+        print("✅ Kaggle API already installed")
+    except ImportError:
+        print("📦 Installing Kaggle API...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "kaggle>=1.5.0"], check=True)
+        print("✅ Kaggle API installed successfully")
+
     # Add current directory to Python path
     sys.path.insert(0, '.')
 

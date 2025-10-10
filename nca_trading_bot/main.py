@@ -101,23 +101,28 @@ def load_fallback_data(config: Config) -> dict:
         tickers = config.top_tickers[:3]  # Use top 3 tickers
 
         for ticker in tickers:
-            sequences, targets = data_handler.create_synthetic_data(n_samples=200, complexity="medium")
             # Create a simple DataFrame from synthetic data
             dates = pd.date_range('2020-01-01', periods=config.data_sequence_length + 50, freq='D')
 
+            # Generate synthetic price series
+            base_price = np.random.uniform(100, 200)
+            price_changes = np.random.normal(0, 0.02, len(dates))
+            prices = base_price * np.exp(np.cumsum(price_changes))
+
             df_data = {
-                'open': np.random.uniform(100, 200, len(dates)),
-                'high': np.random.uniform(100, 200, len(dates)),
-                'low': np.random.uniform(100, 200, len(dates)),
-                'close': np.random.uniform(100, 200, len(dates)),
+                'open': prices * np.random.uniform(0.98, 1.02, len(dates)),
+                'high': prices * np.random.uniform(1.00, 1.05, len(dates)),
+                'low': prices * np.random.uniform(0.95, 1.00, len(dates)),
+                'close': prices,
                 'volume': np.random.uniform(1000000, 10000000, len(dates))
             }
 
-            # Ensure high >= open >= low and close relationships
+            # Ensure proper OHLC relationships
             for i in range(len(dates)):
-                base_price = df_data['open'][i]
-                df_data['high'][i] = max(base_price * np.random.uniform(1.0, 1.05), df_data['high'][i])
-                df_data['low'][i] = min(base_price * np.random.uniform(0.95, 1.0), df_data['low'][i])
+                close = df_data['close'][i]
+                df_data['open'][i] = min(df_data['open'][i], close * 1.05)
+                df_data['high'][i] = max(df_data['high'][i], close, df_data['open'][i])
+                df_data['low'][i] = min(df_data['low'][i], close, df_data['open'][i])
 
             df = pd.DataFrame(df_data, index=dates)
             synthetic_data[ticker] = df
