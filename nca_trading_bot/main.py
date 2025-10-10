@@ -50,47 +50,86 @@ def setup_jax_environment(config: Config):
 
 
 def load_data(config: Config, datasets: Optional[List[str]] = None) -> dict:
-    """Load training data"""
-    print("Loading training data...")
+    """Load training data with real Kaggle download"""
+    print("📊 Loading real market data from Kaggle...")
 
-    data_handler = DataHandler(config)
-    data = {}
+    # Import the downloader
+    from .kaggle_data_downloader import download_and_process_datasets, print_data_statistics
 
-    if datasets is None:
-        datasets = ["kaggle_stock_market", "sp500_data", "yahoo_finance"]
+    # Download real data from Kaggle
+    target_tickers = config.top_tickers[:5]  # Use top 5 tickers
+    print(f"🎯 Target tickers: {', '.join(target_tickers)}")
 
-    for dataset_name in datasets:
-        try:
-            print(f"Loading dataset: {dataset_name}")
-            dataset_data = data_handler.load_kaggle_dataset(dataset_name)
-            if dataset_data:
-                data.update(dataset_data)
-                print(f"✅ Loaded {len(dataset_data)} tickers from {dataset_name}")
-            else:
-                print(f"⚠️  No data loaded from {dataset_name}")
-        except Exception as e:
-            print(f"❌ Error loading {dataset_name}: {e}")
+    data = download_and_process_datasets(config, target_tickers)
 
-    # If no data loaded, create synthetic data for demo
     if not data:
-        print("⚠️  No real data available, creating synthetic data for demo...")
-        try:
-            sequences, targets = data_handler.create_synthetic_data(n_samples=100, complexity="simple")
-            print(f"✅ Created synthetic data: {len(sequences)} sequences")
-        except Exception as e:
-            print(f"❌ Error creating synthetic data: {e}")
-            return {}, data_handler
+        print("❌ Failed to download real data, trying fallback...")
+        return load_fallback_data(config)
+
+    # Print comprehensive statistics
+    print_data_statistics(data)
 
     # Add technical indicators
-    print("Adding technical indicators...")
-    for ticker in list(data.keys())[:5]:  # Process only first 5 tickers for performance
+    print("\n🔧 Adding technical indicators...")
+    data_handler = DataHandler(config)
+    processed_count = 0
+
+    for ticker in list(data.keys()):
         try:
             data[ticker] = data_handler.add_technical_indicators(data[ticker])
+            processed_count += 1
+            print(f"  ✅ Added indicators to {ticker}")
         except Exception as e:
-            print(f"⚠️  Error adding indicators for {ticker}: {e}")
+            print(f"  ⚠️  Error adding indicators for {ticker}: {e}")
 
+    print(f"✅ Processed technical indicators for {processed_count} tickers")
     print(f"✅ Total data loaded: {len(data)} tickers")
+
     return data, data_handler
+
+def load_fallback_data(config: Config) -> dict:
+    """Load fallback data when real data is unavailable"""
+    print("🔄 Loading fallback synthetic data...")
+
+    data_handler = DataHandler(config)
+
+    try:
+        # Create synthetic data for multiple tickers
+        synthetic_data = {}
+        tickers = config.top_tickers[:3]  # Use top 3 tickers
+
+        for ticker in tickers:
+            sequences, targets = data_handler.create_synthetic_data(n_samples=200, complexity="medium")
+            # Create a simple DataFrame from synthetic data
+            dates = pd.date_range('2020-01-01', periods=config.data_sequence_length + 50, freq='D')
+
+            df_data = {
+                'open': np.random.uniform(100, 200, len(dates)),
+                'high': np.random.uniform(100, 200, len(dates)),
+                'low': np.random.uniform(100, 200, len(dates)),
+                'close': np.random.uniform(100, 200, len(dates)),
+                'volume': np.random.uniform(1000000, 10000000, len(dates))
+            }
+
+            # Ensure high >= open >= low and close relationships
+            for i in range(len(dates)):
+                base_price = df_data['open'][i]
+                df_data['high'][i] = max(base_price * np.random.uniform(1.0, 1.05), df_data['high'][i])
+                df_data['low'][i] = min(base_price * np.random.uniform(0.95, 1.0), df_data['low'][i])
+
+            df = pd.DataFrame(df_data, index=dates)
+            synthetic_data[ticker] = df
+
+        # Add technical indicators
+        for ticker in synthetic_data:
+            synthetic_data[ticker] = data_handler.add_technical_indicators(synthetic_data[ticker])
+
+        print(f"✅ Created synthetic data for {len(synthetic_data)} tickers")
+        return synthetic_data, data_handler
+
+    except Exception as e:
+        print(f"❌ Error creating fallback data: {e}")
+        return {}, data_handler
 
 
 def run_training(config: Config, args):
@@ -150,22 +189,39 @@ def run_training(config: Config, args):
         print(f"   !kaggle datasets download -d camnugent/sandp500")
         return
 
+    # Show sample data visualization before training
+    if data:
+        print("\n📈 Visualizing sample market data...")
+        sample_ticker = list(data.keys())[0]
+        sample_df = data[sample_ticker]
+
+        # Import visualizer
+        from .visualization import visualizer
+        visualizer.plot_technical_indicators(
+            sample_df.tail(200),  # Last 200 days
+            sample_ticker,
+            save_path="/kaggle/working/sample_technical_indicators.png"
+        )
+
     # Create combined trainer
     trainer = CombinedTrainer(config)
 
-    # Run training
+    # Run training with actual progress visualization
+    print(f"\n🚀 Starting training with {args.nca_iterations} NCA iterations and {args.ppo_iterations} PPO iterations...")
     trainer.train(
         nca_iterations=args.nca_iterations,
         ppo_iterations=args.ppo_iterations
     )
 
     # Evaluate final model
+    print(f"\n📊 Evaluating final model for {args.eval_episodes} episodes...")
     results = trainer.evaluate(num_episodes=args.eval_episodes)
-    print("\n=== Final Evaluation Results ===")
+    print("\n🎯 Final Evaluation Results:")
     for key, value in results.items():
-        print(f"{key}: {value:.4f}")
+        print(f"  {key}: {value:.4f}")
 
-    print("Training completed!")
+    print(f"\n🎉 Training and evaluation completed!")
+    print(f"📁 All results and visualizations saved to /kaggle/working/")
 
 
 def run_backtesting(config: Config, args):
