@@ -11,13 +11,16 @@ __email__ = "contact@nca-trading-bot.com"
 from .config import Config
 from .nca_model import AdaptiveNCA
 from .data_handler import DataHandler
-from .trader import TradingEnvironment
-from .trainer import PPOTrainer
+from .trader import TradingEnvironment, PPOAgent, TradingBot
+from .trainer import PPOTrainer, CombinedTrainer
 
 __all__ = [
     "Config",
     "AdaptiveNCA",
     "DataHandler",
     "TradingEnvironment",
-    "PPOTrainer"
+    "PPOAgent",
+    "TradingBot",
+    "PPOTrainer",
+    "CombinedTrainer"
 ]

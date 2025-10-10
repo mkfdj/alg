@@ -15,7 +15,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from nca_trading_bot import (
     Config, AdaptiveNCA, DataHandler, TradingEnvironment,
-    PPOAgent, TradingBot, CombinedTrainer
+    PPOAgent, TradingBot, PPOTrainer, CombinedTrainer
 )
 
 
