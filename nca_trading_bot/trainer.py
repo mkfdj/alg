@@ -16,10 +16,10 @@ from tqdm import tqdm
 import time
 import pandas as pd
 
-from .config import Config
-from .nca_model import AdaptiveNCA, NCAEnsemble, create_nca_loss_function, create_sample_pool, apply_damage
-from .trader import TradingEnvironment, PPOAgent
-from .data_handler import DataHandler
+from nca_trading_bot.config import Config
+from nca_trading_bot.nca_model import AdaptiveNCA, NCAEnsemble, create_nca_loss_function, create_sample_pool, apply_damage
+from nca_trading_bot.trader import TradingEnvironment, PPOAgent
+from nca_trading_bot.data_handler import DataHandler
 
 
 class PPOTrainer:
@@ -508,7 +508,7 @@ class CombinedTrainer:
         self.ppo_trainer = PPOTrainer(config, self.env, self.agent)
 
         # Import visualizer
-        from .visualization import visualizer
+        from nca_trading_bot.visualization import visualizer
         self.visualizer = visualizer
 
     def train(self, nca_iterations: int = 1000, ppo_iterations: int = 1000):

@@ -54,7 +54,9 @@ def load_data(config: Config, datasets: Optional[List[str]] = None) -> dict:
     print("📊 Loading real market data from Kaggle...")
 
     # Import the downloader
-    from .kaggle_data_downloader import download_and_process_datasets, print_data_statistics
+    import sys
+    sys.path.append('.')
+    from nca_trading_bot.kaggle_data_downloader import download_and_process_datasets, print_data_statistics
 
     # Download real data from Kaggle
     target_tickers = config.top_tickers[:5]  # Use top 5 tickers
@@ -196,7 +198,7 @@ def run_training(config: Config, args):
         sample_df = data[sample_ticker]
 
         # Import visualizer
-        from .visualization import visualizer
+        from nca_trading_bot.visualization import visualizer
         visualizer.plot_technical_indicators(
             sample_df.tail(200),  # Last 200 days
             sample_ticker,
