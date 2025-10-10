@@ -117,9 +117,11 @@ class Config:
     # === JAX/TPU Configuration ===
     jax_platform: str = "tpu"
     jax_enable_x64: bool = False  # Use float32 for speed
-    jax_debug_nans: bool = True
-    jax_memory_fraction: float = 0.9
+    jax_debug_nans: bool = False  # Disable for production speed
+    jax_memory_fraction: float = 0.95  # Maximize TPU memory usage
     tpu_device_count: int = 8
+    tpu_mesh_shape: Tuple[int, int] = (8, 1)  # Optimized for v5e-8
+    use_bf16: bool = True  # Use bfloat16 for TPU efficiency
 
     # === Dataset Configuration ===
     datasets: Dict[str, Dict] = None
@@ -145,31 +147,23 @@ class Config:
             }
 
     # === Alpaca API Configuration ===
-    alpaca_paper_api_key: Optional[str] = None
-    alpaca_paper_secret_key: Optional[str] = None
-    alpaca_paper_base_url: str = "https://paper-api.alpaca.markets/v2"
-    alpaca_live_api_key: Optional[str] = None
-    alpaca_live_secret_key: Optional[str] = None
-    alpaca_live_base_url: str = "https://api.alpaca.markets"
+    alpaca_base_url: str = "https://paper-api.alpaca.markets/v2"
 
-    def get_alpaca_config(self, paper_mode: bool = True) -> Dict[str, str]:
-        """Get Alpaca API configuration for paper or live trading"""
-        if paper_mode:
-            # For paper trading, use separate API key and secret key
-            api_key = self.alpaca_paper_api_key or os.getenv("ALPACA_PAPER_API_KEY")
-            secret_key = self.alpaca_paper_secret_key or os.getenv("ALPACA_PAPER_SECRET_KEY")
-            return {
-                "key_id": api_key,
-                "secret_key": secret_key,
-                "base_url": self.alpaca_paper_base_url
-            }
-        else:
-            # For live trading, use separate API key and secret key
-            return {
-                "key_id": self.alpaca_live_api_key or os.getenv("ALPACA_LIVE_API_KEY"),
-                "secret_key": self.alpaca_live_secret_key or os.getenv("ALPACA_LIVE_SECRET_KEY"),
-                "base_url": self.alpaca_live_base_url
-            }
+    def get_alpaca_credentials(self) -> Dict[str, str]:
+        """Get Alpaca API credentials from environment variables"""
+        api_key = os.environ.get("ALPACA_PAPER_API_KEY")
+        secret_key = os.environ.get("ALPACA_PAPER_SECRET_KEY")
+
+        if not api_key:
+            raise ValueError("ALPACA_PAPER_API_KEY environment variable not found")
+        if not secret_key:
+            raise ValueError("ALPACA_PAPER_SECRET_KEY environment variable not found")
+
+        return {
+            "api_key": api_key,
+            "secret_key": secret_key,
+            "base_url": self.alpaca_base_url
+        }
 
     # === Technical Indicators Configuration ===
     technical_indicators: Dict[str, Dict] = None
@@ -197,11 +191,14 @@ class Config:
     tensorboard_log_dir: str = "./logs"
 
     # === Optimization Configuration ===
-    use_float16: bool = True  # Use float16 for memory efficiency
+    use_float16: bool = False  # Use bfloat16 instead for TPU
+    use_bfloat16: bool = True  # Better for TPU v5e-8
     gradient_checkpointing: bool = True  # Enable gradient checkpointing
     mixed_precision: bool = True
     compile_nca_evolution: bool = True  # JIT compile NCA evolution
     compile_rl_training: bool = True  # JIT compile RL training
+    pmap_batch_size: int = 512  # Per-chip batch size
+    total_batch_size: int = 4096  # Total batch across 8 chips
 
     # === Risk Management Configuration ===
     risk_management: Dict[str, float] = None

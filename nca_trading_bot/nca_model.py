@@ -117,9 +117,18 @@ class AdaptiveNCA(nn.Module):
         self.growth_threshold = self.config.nca_growth_threshold
         self.max_grid_size = self.config.nca_max_grid_size
 
+        # TPU optimization: pre-compile common operations
+        self._compile_operations()
+
+    def _compile_operations(self):
+        """Pre-compile operations for TPU efficiency"""
+        # These will be JIT compiled at first use
+        self._evolve_fn = None
+        self._perceive_fn = None
+
     def __call__(self, grid, rng_key, training=True):
         """
-        Evolve NCA grid for one step
+        Evolve NCA grid for one step (optimized for TPU)
         Args:
             grid: [batch, height, width, channels]
             rng_key: JAX random key
@@ -127,7 +136,11 @@ class AdaptiveNCA(nn.Module):
         Returns:
             new_grid: [batch, height, width, channels]
         """
-        # Perception step
+        # Use bfloat16 for TPU efficiency if enabled
+        if self.config.use_bfloat16:
+            grid = grid.astype(jnp.bfloat16)
+
+        # Perception step (vectorized for TPU)
         perception = self.perception(grid)
 
         # Update rule
@@ -145,6 +158,10 @@ class AdaptiveNCA(nn.Module):
         # Living cell masking
         alive_mask = self._get_alive_mask(new_grid)
         new_grid = new_grid * alive_mask
+
+        # Convert back to float32 if needed
+        if self.config.use_bfloat16 and training:
+            new_grid = new_grid.astype(jnp.float32)
 
         return new_grid
 

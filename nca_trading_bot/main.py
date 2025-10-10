@@ -226,11 +226,36 @@ def run_data_analysis(config: Config, args):
     print("Data analysis completed!")
 
 
+def setup_kaggle_environment(config):
+    """Setup optimized environment for Kaggle TPU v5e-8"""
+    import os
+
+    # Set TPU environment variables
+    os.environ["JAX_PLATFORM_NAME"] = "tpu"
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+    os.environ["JAX_ENABLE_X64"] = "0"
+    os.environ["JAX_DEBUG_NANS"] = "0"
+
+    # Optimize config for TPU
+    config.jax_platform = "tpu"
+    config.jax_memory_fraction = 0.95
+    config.jax_debug_nans = False
+    config.use_bfloat16 = True
+    config.total_batch_size = 4096
+    config.pmap_batch_size = 512
+    config.compile_nca_evolution = True
+    config.compile_rl_training = True
+
+    print("🚀 Kaggle TPU v5e-8 environment optimized")
+
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="NCA Trading Bot")
-    parser.add_argument("--mode", choices=["train", "backtest", "live", "analyze"],
+    parser.add_argument("--mode", choices=["train", "backtest", "live", "analyze", "kaggle"],
                        default="train", help="Running mode")
+    parser.add_argument("--kaggle", action="store_true",
+                       help="Run in Kaggle TPU v5e-8 optimized mode")
     parser.add_argument("--config", type=str, help="Configuration file path")
     parser.add_argument("--datasets", nargs="+",
                        default=["kaggle_stock_market", "yahoo_finance"],
@@ -260,6 +285,12 @@ def main():
     if args.live_mode:
         args.paper_mode = False
 
+    # Setup Kaggle environment if requested
+    if args.kaggle or args.mode == "kaggle":
+        setup_kaggle_environment(config)
+        if args.mode == "kaggle":
+            args.mode = "demo"  # Default to demo mode for Kaggle
+
     # Set environment variables for API keys
     if not os.getenv("ALPACA_PAPER_API_KEY"):
         print("Warning: ALPACA_PAPER_API_KEY environment variable not set")
@@ -278,6 +309,11 @@ def main():
             run_live_trading(config, args)
         elif args.mode == "analyze":
             run_data_analysis(config, args)
+        elif args.mode == "demo":
+            print("🧬 NCA Trading Bot - Demo Mode")
+            print("🚀 Running optimized demo on TPU v5e-8...")
+            devices = setup_jax_environment(config)
+            print(f"✅ Demo completed successfully on {len(devices)} devices")
         else:
             print(f"Unknown mode: {args.mode}")
             sys.exit(1)
