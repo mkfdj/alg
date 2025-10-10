@@ -13,9 +13,9 @@ ta>=0.10.2
 yfinance>=0.2.28
 
 # Trading APIs
-alpaca-py>=0.8.0
 alpaca-trade-api>=3.1.0
 websocket-client>=1.6.0
+# Note: alpaca-py can be installed if needed with: pip install alpaca-py
 
 # Reinforcement Learning
 gymnasium>=0.29.0

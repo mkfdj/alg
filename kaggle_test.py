@@ -62,41 +62,39 @@ def test_jax():
         return False
 
 def test_alpaca():
-    """Test Alpaca connection"""
+    """Test Alpaca connection with fixed authentication"""
     print("\n🔧 Testing Alpaca...")
 
-    # Get API key and secret from environment variables
-    api_key = os.getenv("ALPACA_PAPER_API_KEY")
-    secret_key = os.getenv("ALPACA_PAPER_SECRET_KEY")
+    # Use the user's provided credentials directly
+    api_key = "PKJ346E2YWMT7HCFZX09"
+    secret_key = "PA3IM0VGKOOM"
+    base_url = "https://paper-api.alpaca.markets/v2"
 
-    if not api_key:
-        print("❌ ALPACA_PAPER_API_KEY environment variable not set!")
-        print("Set it with: os.environ['ALPACA_PAPER_API_KEY'] = 'your_api_key'")
-        return False
-
-    if not secret_key:
-        print("❌ ALPACA_PAPER_SECRET_KEY environment variable not set!")
-        print("Set it with: os.environ['ALPACA_PAPER_SECRET_KEY'] = 'your_secret_key'")
-        return False
+    # Also set environment variables for other parts of the system
+    os.environ["ALPACA_PAPER_API_KEY"] = api_key
+    os.environ["ALPACA_PAPER_SECRET_KEY"] = secret_key
 
     print(f"🔑 Using API Key: {api_key[:8]}...{api_key[-4:]}")
     print(f"🔐 Using Secret Key: {secret_key[:4]}...{secret_key[-4:]}")
+    print(f"🌐 Base URL: {base_url}")
 
     try:
-        print("🔄 Trying alpaca-trade-api...")
+        print("🔄 Trying alpaca-trade-api with v2 endpoint...")
 
         try:
             import alpaca_trade_api as tradeapi
         except ImportError:
             print("❌ alpaca-trade-api not installed. Installing...")
             import subprocess
-            subprocess.run(["pip", "install", "alpaca-trade-api"], check=True)
+            subprocess.run([sys.executable, "-m", "pip", "install", "alpaca-trade-api>=3.1.0", "--quiet"], check=True)
             import alpaca_trade_api as tradeapi
 
+        # Use the correct v2 endpoint with api_version parameter
         api = tradeapi.REST(
             key_id=api_key,
-            secret_key=secret_key,  # Separate secret key
-            base_url="https://paper-api.alpaca.markets"
+            secret_key=secret_key,
+            base_url=base_url,
+            api_version='v2'
         )
 
         account = api.get_account()
@@ -106,29 +104,48 @@ def test_alpaca():
         print(f"   Buying Power: ${float(account.buying_power):,.2f}")
         print(f"   Portfolio Value: ${float(account.portfolio_value):,.2f}")
         print(f"   Cash: ${float(account.cash):,.2f}")
+        print(f"   Day Trading Count: {account.daytrade_count}")
+
+        # Test clock
+        try:
+            clock = api.get_clock()
+            print(f"   Market: {'🟢 Open' if clock.is_open else '🔴 Closed'}")
+        except:
+            print(f"   Market: Unable to get clock info")
 
         return True
 
     except Exception as e:
-        print(f"❌ Alpaca error: {e}")
+        print(f"❌ Alpaca error: {type(e).__name__}: {str(e)}")
 
-        # Try v2 endpoint
-        print("🔄 Trying with /v2 endpoint...")
+        # Try direct HTTP request as fallback
+        print("🔄 Trying direct HTTP request...")
         try:
-            import alpaca_trade_api as tradeapi
-            api = tradeapi.REST(
-                key_id=api_key,
-                secret_key=secret_key,
-                base_url="https://paper-api.alpaca.markets/v2"
-            )
-            account = api.get_account()
-            print(f"✅ Alpaca v2 connection successful!")
-            print(f"   Account ID: {account.id}")
-            print(f"   Buying Power: ${float(account.buying_power):,.2f}")
-            return True
-        except Exception as e2:
-            print(f"❌ All Alpaca attempts failed: {e2}")
-            return False
+            import requests
+
+            headers = {
+                'APCA-API-KEY-ID': api_key,
+                'APCA-API-SECRET-KEY': secret_key,
+                'Content-Type': 'application/json'
+            }
+
+            response = requests.get(f"{base_url}/account", headers=headers, timeout=30)
+
+            if response.status_code == 200:
+                account_data = response.json()
+                print(f"✅ Direct HTTP request successful!")
+                print(f"   Account ID: {account_data.get('id')}")
+                print(f"   Status: {account_data.get('status')}")
+                print(f"   Portfolio Value: ${float(account_data.get('portfolio_value', 0)):,.2f}")
+                return True
+            else:
+                print(f"❌ HTTP request failed: {response.status_code}")
+                print(f"   Response: {response.text[:200]}...")
+
+        except Exception as http_error:
+            print(f"❌ HTTP fallback failed: {http_error}")
+
+        return False
 
 def test_nca_config():
     """Test NCA configuration"""
@@ -172,13 +189,7 @@ def test_nca_config():
 
 if __name__ == "__main__":
     print("🚀 Kaggle Environment Test")
-    print("=" * 50)
-
-    # Set environment variables (remove hardcoded API keys)
-    print("🔐 Setting up environment variables...")
-    os.environ["ALPACA_PAPER_API_KEY"] = os.getenv("ALPACA_PAPER_API_KEY", "")
-    os.environ["ALPACA_PAPER_SECRET_KEY"] = os.getenv("ALPACA_PAPER_SECRET_KEY", "")
-    print("✅ Environment variables configured")
+    print("=" * 60)
 
     all_passed = True
 
@@ -187,20 +198,19 @@ if __name__ == "__main__":
     all_passed &= test_nca_config()
     all_passed &= test_alpaca()
 
-    print("\n" + "=" * 50)
+    print("\n" + "=" * 60)
     if all_passed:
         print("🎉 All tests passed! Ready to start training!")
-        print("\nNext steps:")
-        print("1. Set your API keys:")
-        print("   os.environ['ALPACA_PAPER_API_KEY'] = 'PKJ346E2YWMT7HCFZX09'")
-        print("   os.environ['ALPACA_PAPER_SECRET_KEY'] = 'your_secret_key_from_dashboard'")
+        print("\n🚀 Next steps:")
+        print("1. Run debug script: python kaggle_debug_alpaca.py")
         print("2. Download datasets: python datasets/download_datasets.py")
         print("3. Analyze data: python nca_trading_bot/main.py --mode analyze")
         print("4. Train model: python nca_trading_bot/main.py --mode train")
+        print("5. Start paper trading: python nca_trading_bot/main.py --mode trade")
     else:
         print("❌ Some tests failed. Check the errors above.")
-        print("\n💡 Tips:")
-        print("- Get both API key and secret key from your Alpaca dashboard")
-        print("- Go to: https://app.alpaca.markets/ → API Keys")
-        print("- Both ALPACA_PAPER_API_KEY and ALPACA_PAPER_SECRET_KEY must be set")
-        print("- Make sure your Alpaca paper account is active")
+        print("\n💡 Debug Tips:")
+        print("- Run: python kaggle_debug_alpaca.py for detailed diagnosis")
+        print("- Check your Alpaca dashboard: https://app.alpaca.markets/")
+        print("- Verify paper trading account is approved")
+        print("- API keys are pre-configured in this test script")

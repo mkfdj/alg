@@ -68,6 +68,52 @@ class Config:
                 "JNJ"    # Johnson & Johnson - Healthcare
             ]
 
+        # Initialize datasets
+        if self.datasets is None:
+            self.datasets = {
+                "kaggle_stock_market": {
+                    "path": "/kaggle/input/stock-market-dataset",
+                    "format": "csv",
+                    "description": "NASDAQ stocks with OHLCV data"
+                },
+                "yahoo_finance": {
+                    "tickers": self.top_tickers,
+                    "format": "yfinance",
+                    "description": "Real-time and historical data via yfinance"
+                },
+                "sp500_components": {
+                    "path": "/kaggle/input/s-and-p-500",
+                    "format": "csv",
+                    "description": "S&P 500 historical data"
+                }
+            }
+
+        # Initialize technical indicators
+        if self.technical_indicators is None:
+            self.technical_indicators = {
+                "rsi": {"period": 14},
+                "macd": {"fast": 12, "slow": 26, "signal": 9},
+                "bollinger": {"period": 20, "std": 2},
+                "atr": {"period": 14},
+                "sma": {"periods": [5, 20, 50]},
+                "ema": {"periods": [12, 26]},
+                "stochastic": {"k": 14, "d": 3},
+                "volume_sma": {"period": 20},
+                "vwap": {"periods": [5, 20]}
+            }
+
+        # Initialize risk management
+        if self.risk_management is None:
+            self.risk_management = {
+                "max_drawdown": 0.20,  # 20% max drawdown
+                "max_consecutive_losses": 5,
+                "min_sharpe_ratio": 0.5,
+                "max_volatility": 0.30,  # 30% annual volatility
+                "min_liquidity": 50000000,  # $50M daily volume minimum
+                "max_position_age_days": 30,  # Close positions after 30 days
+                "portfolio_rebalance_frequency": "daily"
+            }
+
     # === JAX/TPU Configuration ===
     jax_platform: str = "tpu"
     jax_enable_x64: bool = False  # Use float32 for speed
