@@ -467,7 +467,7 @@ class AlpacaV2Tester:
 def main():
     """Main function for direct script execution"""
     # Example usage with hardcoded keys (replace with your own)
-    api_key = ""  # Replace with your key
+    api_key = "PK8OP9HMO3QICJMAFMKG"  # Replace with your key
     secret_key = "Pge5ic8eDN0ze0YTpEJxNmpdf3YGUnhOVnWJZbf7"  # Replace with your secret
     
     # Or use environment variables (recommended)
