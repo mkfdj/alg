@@ -1,31 +1,28 @@
-# Minimal requirements for NCA Trading Bot on Kaggle TPU
-# Install with: pip install -r requirements.txt
-
-# Core ML/TPU packages
-jax[tpu]==0.4.35
-flax==0.8.4
-optax==0.2.2
-chex==0.1.87
+# NCA Trading Bot requirements
+jax[tpu]
+flax
+optax
+chex
 
 # Data processing
-pandas==2.1.4
-numpy==1.24.4
-scikit-learn==1.3.2
+pandas
+numpy
+scikit-learn
 
 # Financial data
-yfinance==0.2.28
-ta==0.10.2
+yfinance
+ta
 
 # Visualization
-matplotlib==3.8.2
-seaborn==0.13.0
-plotly==5.17.0
+matplotlib
+seaborn
+plotly
 
 # Progress tracking
-tqdm==4.66.1
+tqdm
 
 # Kaggle API
-kaggle==1.5.16
+kaggle
 
 # Utilities
-requests==2.31.0
+requests
