@@ -13,10 +13,9 @@ ta>=0.10.2
 yfinance>=0.2.28
 
 # Trading APIs
-alpaca-trade-api>=3.1.0
+alpaca-py>=0.30.0
 websocket-client>=1.6.0
-# Note: alpaca-py can be installed if needed with: pip install alpaca-py
-
+alpaca-trade-api 
 # Reinforcement Learning
 gymnasium>=0.29.0
 stable-baselines3>=2.3.0
@@ -43,7 +42,6 @@ flake8>=6.1.0
 # Jupyter/Kaggle Support
 jupyter>=1.0.0
 ipywidgets>=8.1.0
-alpaca
 
 # Optional: Advanced features
 # transformers>=4.35.0  # For sentiment analysis
