@@ -199,7 +199,7 @@ class DataHandler:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
         # Handle missing values
-        df = df.fillna(method='ffill').fillna(method='bfill')
+        df = df.ffill().bfill()
 
         # Remove outliers (prices that changed by >50% in one day)
         for col in ['open', 'high', 'low', 'close']:
@@ -545,17 +545,21 @@ class DataHandler:
         gains = np.where(deltas > 0, deltas, 0)
         losses = np.where(deltas < 0, -deltas, 0)
 
-        avg_gain = pd.Series(gains).rolling(period).mean().fillna(0).values
-        avg_loss = pd.Series(losses).rolling(period).mean().fillna(0).values
+        # Use pandas for rolling operations
+        gains_series = pd.Series(gains)
+        losses_series = pd.Series(losses)
 
-        rs = np.where(avg_loss != 0, avg_gain / avg_loss, 100)
+        avg_gain = gains_series.rolling(window=period, min_periods=1).mean().bfill().fillna(0).values
+        avg_loss = losses_series.rolling(window=period, min_periods=1).mean().bfill().fillna(0).values
+
+        rs = np.where(avg_loss > 0, avg_gain / avg_loss, 100)
         rsi = 100 - (100 / (1 + rs))
 
         return rsi
 
     def _synthetic_moving_average(self, prices: np.ndarray, period: int) -> np.ndarray:
         """Generate synthetic moving average"""
-        return pd.Series(prices).rolling(period).mean().fillna(prices).values
+        return pd.Series(prices).rolling(window=period, min_periods=1).mean().bfill().fillna(prices).values
 
     def save_data_cache(self, data: Dict[str, pd.DataFrame], cache_path: str):
         """Save processed data to cache"""
