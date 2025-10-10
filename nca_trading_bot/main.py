@@ -56,26 +56,39 @@ def load_data(config: Config, datasets: Optional[List[str]] = None) -> dict:
     data = {}
 
     if datasets is None:
-        datasets = ["kaggle_stock_market", "yahoo_finance"]
+        datasets = ["kaggle_stock_market", "sp500_data", "yahoo_finance"]
 
     for dataset_name in datasets:
         try:
             print(f"Loading dataset: {dataset_name}")
             dataset_data = data_handler.load_kaggle_dataset(dataset_name)
-            data.update(dataset_data)
-            print(f"Loaded {len(dataset_data)} tickers from {dataset_name}")
+            if dataset_data:
+                data.update(dataset_data)
+                print(f"✅ Loaded {len(dataset_data)} tickers from {dataset_name}")
+            else:
+                print(f"⚠️  No data loaded from {dataset_name}")
         except Exception as e:
-            print(f"Error loading {dataset_name}: {e}")
+            print(f"❌ Error loading {dataset_name}: {e}")
+
+    # If no data loaded, create synthetic data for demo
+    if not data:
+        print("⚠️  No real data available, creating synthetic data for demo...")
+        try:
+            sequences, targets = data_handler.create_synthetic_data(n_samples=100, complexity="simple")
+            print(f"✅ Created synthetic data: {len(sequences)} sequences")
+        except Exception as e:
+            print(f"❌ Error creating synthetic data: {e}")
+            return {}, data_handler
 
     # Add technical indicators
     print("Adding technical indicators...")
-    for ticker in data:
+    for ticker in list(data.keys())[:5]:  # Process only first 5 tickers for performance
         try:
             data[ticker] = data_handler.add_technical_indicators(data[ticker])
         except Exception as e:
-            print(f"Error adding indicators for {ticker}: {e}")
+            print(f"⚠️  Error adding indicators for {ticker}: {e}")
 
-    print(f"Total data loaded: {len(data)} tickers")
+    print(f"✅ Total data loaded: {len(data)} tickers")
     return data, data_handler
 
 
