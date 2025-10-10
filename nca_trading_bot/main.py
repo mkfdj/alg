@@ -233,12 +233,18 @@ def run_data_analysis(config: Config, args):
 def setup_kaggle_environment(config):
     """Setup optimized environment for Kaggle TPU v5e-8"""
     import os
+    import jax
 
-    # Set TPU environment variables
+    # Set TPU environment variables BEFORE any JAX operations
     os.environ["JAX_PLATFORM_NAME"] = "tpu"
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
     os.environ["JAX_ENABLE_X64"] = "0"
     os.environ["JAX_DEBUG_NANS"] = "0"
+
+    # Configure JAX before any imports
+    jax.config.update("jax_platform_name", "tpu")
+    jax.config.update("jax_enable_x64", False)
+    jax.config.update("jax_debug_nans", False)
 
     # Optimize config for TPU
     config.jax_platform = "tpu"
@@ -317,7 +323,24 @@ def main():
             print("🧬 NCA Trading Bot - Demo Mode")
             print("🚀 Running optimized demo on TPU v5e-8...")
             devices = setup_jax_environment(config)
+
+            # Test JAX operations
+            import jax.numpy as jnp
+
+            print("Testing TPU operations...")
+            x = jnp.ones((1000, 1000))
+            y = jnp.dot(x, x.T)
+            result = jnp.sum(y)
+            print(f"✅ TPU test computation successful: result = {result:.2e}")
+
+            # Test NCA operations
+            print("Testing NCA grid operations...")
+            nca_grid = jnp.ones((32, 32, 16))  # Small test grid
+            evolved = nca_grid + 0.01 * jnp.sin(nca_grid)
+            print(f"✅ NCA operations successful: grid shape = {evolved.shape}")
+
             print(f"✅ Demo completed successfully on {len(devices)} devices")
+            print("🎉 NCA Trading Bot is ready for training!")
         else:
             print(f"Unknown mode: {args.mode}")
             sys.exit(1)

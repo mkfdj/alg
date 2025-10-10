@@ -41,8 +41,10 @@ class DataHandler:
 
         if dataset_name == "kaggle_stock_market":
             return self._load_kaggle_stock_market(base_path, tickers)
-        elif dataset_name == "sp500_components":
+        elif dataset_name == "sp500_data":
             return self._load_sp500_dataset(base_path, tickers)
+        elif dataset_name == "yahoo_finance":
+            return self.load_yfinance_data(tickers or self.config.top_tickers)
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
 
@@ -92,24 +94,54 @@ class DataHandler:
         """Load S&P 500 dataset"""
         data = {}
 
-        # Try to find the main data file
-        data_files = list(base_path.glob("*.csv"))
-        if not data_files:
-            data_files = list(base_path.glob("*/*.csv"))
-
-        for file_path in data_files:
+        # First try the main consolidated file
+        all_stocks_file = base_path / "all_stocks_5yr.csv"
+        if all_stocks_file.exists():
+            print("Loading S&P 500 data from all_stocks_5yr.csv...")
             try:
-                ticker = file_path.stem
-                if tickers and ticker not in tickers:
-                    continue
+                df = pd.read_csv(all_stocks_file)
 
-                df = pd.read_csv(file_path, index_col='Date', parse_dates=True)
-                df = self._clean_and_validate_dataframe(df, ticker)
-                if df is not None:
-                    data[ticker] = df
+                # Filter by tickers if specified
+                if tickers:
+                    df = df[df['Name'].isin(tickers)]
+
+                # Process each ticker
+                for ticker in df['Name'].unique():
+                    ticker_df = df[df['Name'] == ticker].copy()
+                    ticker_df['Date'] = pd.to_datetime(ticker_df['Date'])
+                    ticker_df.set_index('Date', inplace=True)
+                    ticker_df.drop('Name', axis=1, inplace=True)
+
+                    # Clean and validate
+                    ticker_df = self._clean_and_validate_dataframe(ticker_df, ticker)
+                    if ticker_df is not None:
+                        data[ticker] = ticker_df
+
+                print(f"Loaded {len(data)} tickers from S&P 500 dataset")
+                return data
+
             except Exception as e:
-                print(f"Error loading {ticker}: {e}")
-                continue
+                print(f"Error loading all_stocks_5yr.csv: {e}")
+
+        # Fallback to individual stock files
+        individual_stocks_path = base_path / "individual_stocks_5yr"
+        if individual_stocks_path.exists():
+            print("Loading S&P 500 data from individual stock files...")
+            stock_files = list(individual_stocks_path.glob("*.csv"))
+
+            if tickers:
+                stock_files = [f for f in stock_files if f.stem in tickers]
+
+            for file_path in stock_files[:100]:  # Limit to 100 files for performance
+                try:
+                    ticker = file_path.stem
+                    df = pd.read_csv(file_path, index_col='Date', parse_dates=True)
+                    df = self._clean_and_validate_dataframe(df, ticker)
+                    if df is not None:
+                        data[ticker] = df
+                except Exception as e:
+                    print(f"Error loading {ticker}: {e}")
+                    continue
 
         return data
 

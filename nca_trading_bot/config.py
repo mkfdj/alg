@@ -74,17 +74,19 @@ class Config:
                 "kaggle_stock_market": {
                     "path": "/kaggle/input/stock-market-dataset",
                     "format": "csv",
-                    "description": "NASDAQ stocks with OHLCV data"
+                    "description": "NASDAQ stocks with OHLCV data (stocks/etfs folders)",
+                    "structure": "folder_based"
                 },
                 "yahoo_finance": {
                     "tickers": self.top_tickers,
                     "format": "yfinance",
                     "description": "Real-time and historical data via yfinance"
                 },
-                "sp500_components": {
-                    "path": "/kaggle/input/s-and-p-500",
+                "sp500_data": {
+                    "path": "/kaggle/input/sandp500",
                     "format": "csv",
-                    "description": "S&P 500 historical data"
+                    "description": "S&P 500 stock data (all_stocks_5yr.csv or individual_stocks_5yr/)",
+                    "structure": "single_file"
                 }
             }
 
