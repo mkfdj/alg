@@ -65,17 +65,24 @@ def test_alpaca():
     """Test Alpaca connection"""
     print("\n🔧 Testing Alpaca...")
 
-    # Get API key from environment variable
+    # Get API key and secret from environment variables
     api_key = os.getenv("ALPACA_PAPER_API_KEY")
+    secret_key = os.getenv("ALPACA_PAPER_SECRET_KEY")
+
     if not api_key:
         print("❌ ALPACA_PAPER_API_KEY environment variable not set!")
         print("Set it with: os.environ['ALPACA_PAPER_API_KEY'] = 'your_api_key'")
         return False
 
-    print(f"🔑 Using API Key: {api_key[:8]}...{api_key[-4:]}")  # Show only partial key
+    if not secret_key:
+        print("❌ ALPACA_PAPER_SECRET_KEY environment variable not set!")
+        print("Set it with: os.environ['ALPACA_PAPER_SECRET_KEY'] = 'your_secret_key'")
+        return False
+
+    print(f"🔑 Using API Key: {api_key[:8]}...{api_key[-4:]}")
+    print(f"🔐 Using Secret Key: {secret_key[:4]}...{secret_key[-4:]}")
 
     try:
-        # Try fallback with older library that works with single key
         print("🔄 Trying alpaca-trade-api...")
 
         try:
@@ -88,32 +95,34 @@ def test_alpaca():
 
         api = tradeapi.REST(
             key_id=api_key,
-            secret_key=api_key,  # Single key for paper trading
-            base_url="https://paper-api.alpaca.markets/v2"
+            secret_key=secret_key,  # Separate secret key
+            base_url="https://paper-api.alpaca.markets"
         )
 
         account = api.get_account()
         print(f"✅ Alpaca connection successful!")
         print(f"   Account ID: {account.id}")
+        print(f"   Status: {account.status}")
         print(f"   Buying Power: ${float(account.buying_power):,.2f}")
         print(f"   Portfolio Value: ${float(account.portfolio_value):,.2f}")
+        print(f"   Cash: ${float(account.cash):,.2f}")
 
         return True
 
     except Exception as e:
         print(f"❌ Alpaca error: {e}")
 
-        # Try without v2 endpoint
-        print("🔄 Trying without /v2...")
+        # Try v2 endpoint
+        print("🔄 Trying with /v2 endpoint...")
         try:
             import alpaca_trade_api as tradeapi
             api = tradeapi.REST(
                 key_id=api_key,
-                secret_key=api_key,
-                base_url="https://paper-api.alpaca.markets"
+                secret_key=secret_key,
+                base_url="https://paper-api.alpaca.markets/v2"
             )
             account = api.get_account()
-            print(f"✅ Alpaca fallback connection successful!")
+            print(f"✅ Alpaca v2 connection successful!")
             print(f"   Account ID: {account.id}")
             print(f"   Buying Power: ${float(account.buying_power):,.2f}")
             return True
@@ -165,9 +174,10 @@ if __name__ == "__main__":
     print("🚀 Kaggle Environment Test")
     print("=" * 50)
 
-    # Set environment variable (remove hardcoded API key)
+    # Set environment variables (remove hardcoded API keys)
     print("🔐 Setting up environment variables...")
     os.environ["ALPACA_PAPER_API_KEY"] = os.getenv("ALPACA_PAPER_API_KEY", "")
+    os.environ["ALPACA_PAPER_SECRET_KEY"] = os.getenv("ALPACA_PAPER_SECRET_KEY", "")
     print("✅ Environment variables configured")
 
     all_passed = True
@@ -181,12 +191,16 @@ if __name__ == "__main__":
     if all_passed:
         print("🎉 All tests passed! Ready to start training!")
         print("\nNext steps:")
-        print("1. Set your API key: os.environ['ALPACA_PAPER_API_KEY'] = 'your_key'")
+        print("1. Set your API keys:")
+        print("   os.environ['ALPACA_PAPER_API_KEY'] = 'PKJ346E2YWMT7HCFZX09'")
+        print("   os.environ['ALPACA_PAPER_SECRET_KEY'] = 'your_secret_key_from_dashboard'")
         print("2. Download datasets: python datasets/download_datasets.py")
         print("3. Analyze data: python nca_trading_bot/main.py --mode analyze")
         print("4. Train model: python nca_trading_bot/main.py --mode train")
     else:
         print("❌ Some tests failed. Check the errors above.")
         print("\n💡 Tips:")
-        print("- Make sure ALPACA_PAPER_API_KEY environment variable is set")
-        print("- Check that your Alpaca paper account is active")
+        print("- Get both API key and secret key from your Alpaca dashboard")
+        print("- Go to: https://app.alpaca.markets/ → API Keys")
+        print("- Both ALPACA_PAPER_API_KEY and ALPACA_PAPER_SECRET_KEY must be set")
+        print("- Make sure your Alpaca paper account is active")

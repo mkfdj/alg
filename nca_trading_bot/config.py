@@ -109,11 +109,12 @@ class Config:
     def get_alpaca_config(self, paper_mode: bool = True) -> Dict[str, str]:
         """Get Alpaca API configuration for paper or live trading"""
         if paper_mode:
-            # For paper trading, use single API key (paper accounts have exception)
-            paper_api_key = self.alpaca_paper_api_key or os.getenv("ALPACA_PAPER_API_KEY")
+            # For paper trading, use separate API key and secret key
+            api_key = self.alpaca_paper_api_key or os.getenv("ALPACA_PAPER_API_KEY")
+            secret_key = self.alpaca_paper_secret_key or os.getenv("ALPACA_PAPER_SECRET_KEY")
             return {
-                "key_id": paper_api_key,
-                "secret_key": paper_api_key,  # Paper trading uses same key for both
+                "key_id": api_key,
+                "secret_key": secret_key,
                 "base_url": self.alpaca_paper_base_url
             }
         else:
