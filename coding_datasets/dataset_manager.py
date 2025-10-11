@@ -116,26 +116,7 @@ class DatasetManager:
             self.logger.error(f"Failed to download dataset {dataset_id}: {str(e)}")
             raise
 
-    def download_dataset(self, dataset_id: str, force_redownload: bool = False) -> str:
-        """
-        Download a specific dataset
-
-        Args:
-            dataset_id: Dataset ID from registry
-            force_redownload: Force re-download even if file exists
-
-        Returns:
-            Path to downloaded dataset
-        """
-        try:
-            self.logger.info(f"Downloading dataset: {dataset_id}")
-            file_path = self.downloader.download_dataset(dataset_id, force_redownload)
-            self.logger.info(f"Successfully downloaded dataset: {dataset_id}")
-            return file_path
-        except Exception as e:
-            self.logger.error(f"Failed to download dataset {dataset_id}: {str(e)}")
-            raise
-
+  
     def download_all_datasets(self, force_redownload: bool = False) -> Dict[str, str]:
         """
         Download all datasets in the registry

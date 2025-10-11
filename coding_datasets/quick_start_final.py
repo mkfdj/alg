@@ -44,12 +44,12 @@ def quick_start():
         manager = DatasetManager()
         print("✅ DatasetManager initialized")
 
-        # Get actual small datasets from registry
-        small_datasets = manager.registry.get_small_datasets(max_mb=100)
+        # Get ALL datasets without size restrictions
+        all_datasets = manager.registry.list_datasets()
 
-        print(f"\n📊 Available datasets under 100MB:")
+        print(f"\n📊 ALL AVAILABLE DATASETS:")
         total_size_mb = 0
-        for dataset_id in small_datasets:
+        for dataset_id in all_datasets:
             info = manager.registry.get_dataset_info(dataset_id)
             # Convert size to MB
             size_str = info.size
@@ -57,18 +57,20 @@ def quick_start():
                 size_mb = float(size_str.replace(" kB", "")) / 1024
             elif "MB" in size_str:
                 size_mb = float(size_str.replace(" MB", ""))
+            elif "GB" in size_str:
+                size_mb = float(size_str.replace(" GB", "")) * 1024
             else:
                 size_mb = 0
             total_size_mb += size_mb
             print(f"  • {dataset_id}: {info.name} ({info.size})")
 
-        print(f"\nTotal small datasets: {len(small_datasets)}")
-        print(f"Total download size: {round(total_size_mb, 2)} MB")
+        print(f"\nTotal datasets: {len(all_datasets)}")
+        print(f"Total download size: {round(total_size_mb, 2)} MB ({round(total_size_mb/1024, 2)} GB)")
 
-        print(f"\n📥 Downloading {len(small_datasets)} datasets...")
+        print(f"\n📥 Downloading ALL {len(all_datasets)} datasets...")
 
         successful_downloads = []
-        for dataset_id in small_datasets:
+        for dataset_id in all_datasets:
             try:
                 print(f"  ⬇️  {dataset_id}...")
                 manager.download_dataset(dataset_id)

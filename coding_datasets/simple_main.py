@@ -101,10 +101,10 @@ def cmd_download(manager, args):
 
     try:
         if args.all:
-            # Download only small datasets to avoid space issues
-            small_datasets = manager.registry.get_small_datasets(max_mb=100)
-            print(f"Downloading {len(small_datasets)} small datasets...")
-            datasets = small_datasets
+            # Download ALL datasets without size restrictions
+            all_datasets = manager.registry.list_datasets()
+            print(f"Downloading ALL {len(all_datasets)} datasets...")
+            datasets = all_datasets
         else:
             datasets = args.datasets
 

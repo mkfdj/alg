@@ -249,9 +249,9 @@ class DatasetRegistry:
             "format_distribution": format_counts
         }
 
-    def get_small_datasets(self, max_mb: float = 100) -> List[str]:
+    def get_datasets_by_size_limit(self, max_mb: float = 100) -> List[str]:
         """Get datasets that are smaller than max_mb"""
-        small_datasets = []
+        datasets = []
         for dataset_id, info in self.datasets.items():
             size_str = info.size
             try:
@@ -265,13 +265,35 @@ class DatasetRegistry:
                     continue
 
                 if size_mb <= max_mb:
-                    small_datasets.append(dataset_id)
+                    datasets.append(dataset_id)
             except:
                 continue
 
-        return small_datasets
+        return datasets
 
-    def get_large_datasets(self, min_mb: float = 500) -> List[str]:
+    def get_medium_datasets(self, max_mb: float = 1000) -> List[str]:
+        """Get datasets that are medium size (100MB - max_mb)"""
+        medium_datasets = []
+        for dataset_id, info in self.datasets.items():
+            size_str = info.size
+            try:
+                if "kB" in size_str:
+                    size_mb = float(size_str.replace(" kB", "")) / 1024
+                elif "MB" in size_str:
+                    size_mb = float(size_str.replace(" MB", ""))
+                elif "GB" in size_str:
+                    size_mb = float(size_str.replace(" GB", "")) * 1024
+                else:
+                    continue
+
+                if 100 < size_mb <= max_mb:
+                    medium_datasets.append(dataset_id)
+            except:
+                continue
+
+        return medium_datasets
+
+    def get_large_datasets(self, min_mb: float = 1000) -> List[str]:
         """Get datasets that are larger than min_mb"""
         large_datasets = []
         for dataset_id, info in self.datasets.items():
@@ -292,3 +314,11 @@ class DatasetRegistry:
                 continue
 
         return large_datasets
+
+    def get_datasets_for_size_limit(self, max_mb: float = 500) -> Dict[str, List[str]]:
+        """Get all datasets categorized by size"""
+        return {
+            "small": self.get_datasets_by_size_limit(100),
+            "medium": self.get_medium_datasets(max_mb),
+            "large": self.get_large_datasets(max_mb)
+        }

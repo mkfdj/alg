@@ -211,23 +211,9 @@ class DatasetDownloader:
             raise
 
     def _is_large_dataset(self, dataset_info) -> bool:
-        """Check if dataset is too large to download"""
-        # Extract size in MB from size string
-        size_str = dataset_info.size
-        try:
-            if "MB" in size_str:
-                size_mb = float(size_str.replace(" MB", ""))
-            elif "GB" in size_str:
-                size_mb = float(size_str.replace(" GB", "")) * 1024
-            elif "KB" in size_str:
-                size_mb = float(size_str.replace(" KB", "")) / 1024
-            else:
-                return False
-
-            # Skip datasets larger than 500MB
-            return size_mb > 500
-        except:
-            return False
+        """Check if dataset is too large to download - DISABLED for downloading ALL datasets"""
+        # Always return False to allow all datasets to be downloaded
+        return False
 
     def download_all_datasets(self, force_redownload: bool = False) -> Dict[str, str]:
         """
