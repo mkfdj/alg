@@ -111,7 +111,7 @@ def cmd_download(manager, args):
         for dataset_id in datasets:
             print(f"Downloading {dataset_id}...")
             try:
-                file_path = manager.download_dataset(dataset_id, check_space=True)
+                file_path = manager.download_dataset(dataset_id)
                 print(f"✓ Downloaded to: {file_path}")
             except Exception as e:
                 print(f"✗ Failed to download {dataset_id}: {str(e)}")

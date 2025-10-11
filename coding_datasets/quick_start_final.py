@@ -71,7 +71,7 @@ def quick_start():
         for dataset_id in small_datasets:
             try:
                 print(f"  ⬇️  {dataset_id}...")
-                manager.download_dataset(dataset_id, check_space=True)
+                manager.download_dataset(dataset_id)
                 successful_downloads.append(dataset_id)
                 print(f"  ✅ {dataset_id}")
             except Exception as e:
