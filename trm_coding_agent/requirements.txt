@@ -1,0 +1,37 @@
+# Core JAX/Flax dependencies for TPU support
+jax[tpu]
+flax
+optax
+chex
+
+# Machine learning utilities
+tokenizers
+transformers
+huggingface-hub
+
+# Data processing
+pandas
+numpy
+pyarrow
+lance
+
+# Monitoring and logging
+wandb
+tensorboard
+tqdm
+
+# Utilities
+timeout-decorator
+psutil
+
+# Development and testing
+pytest
+pytest-cov
+pre-commit
+
+# Documentation (optional)
+sphinx
+sphinx-rtd-theme
+
+# Kaggle CLI (optional, for dataset downloads)
+kaggle
