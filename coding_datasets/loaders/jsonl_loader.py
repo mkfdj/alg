@@ -4,7 +4,7 @@ JSONL data loader
 
 import json
 from typing import List, Dict, Union, Any, Optional
-from .base_loader import BaseLoader
+from base_loader import BaseLoader
 
 
 class JSONLLoader(BaseLoader):

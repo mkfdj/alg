@@ -14,7 +14,7 @@ try:
 except ImportError:
     KAGGLE_AVAILABLE = False
 
-from .registry import DatasetRegistry, DatasetInfo
+from registry import DatasetRegistry, DatasetInfo
 
 
 class DatasetDownloader:

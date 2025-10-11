@@ -4,7 +4,7 @@ Parquet data loader
 
 import os
 from typing import List, Dict, Union, Any, Optional
-from .base_loader import BaseLoader
+from base_loader import BaseLoader
 
 try:
     import pyarrow.parquet as pq

@@ -8,11 +8,11 @@ from pathlib import Path
 import json
 import os
 
-from .registry import DatasetRegistry, DatasetInfo
-from .downloader import DatasetDownloader
-from .loaders import CSVLoader, JSONLoader, JSONLLoader, LanceLoader, ParquetLoader
-from .utils import DataPreprocessor, CodeCleaner, PromptFormatter, DataValidator
-from .configs import ConfigManager, get_default_config
+from registry import DatasetRegistry, DatasetInfo
+from downloader import DatasetDownloader
+from loaders import CSVLoader, JSONLoader, JSONLLoader, LanceLoader, ParquetLoader
+from utils import DataPreprocessor, CodeCleaner, PromptFormatter, DataValidator
+from configs import ConfigManager, get_default_config
 
 
 class DatasetManager:

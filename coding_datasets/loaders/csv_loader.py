@@ -4,7 +4,7 @@ CSV data loader
 
 import pandas as pd
 from typing import List, Dict, Union, Any, Optional
-from .base_loader import BaseLoader
+from base_loader import BaseLoader
 
 
 class CSVLoader(BaseLoader):
