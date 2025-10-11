@@ -1,5 +1,5 @@
 """
-Default configuration templates - Fixed version
+Default configuration templates
 """
 
 def get_default_config() -> dict:
@@ -137,7 +137,7 @@ def get_preprocessing_config() -> dict:
         "encoding_fixes": {
             "enabled": True,
             "common_issues": [
-                "\\u2019", "\\u201c", "\\u201d", "\\u2026", "\\u201e"
+                "â€™", "â€œ", "â€", "â€\"", "â€¦", "â€""
             ],
             "normalize_unicode": True
         }
