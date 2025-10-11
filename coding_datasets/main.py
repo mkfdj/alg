@@ -8,8 +8,14 @@ import os
 import sys
 from pathlib import Path
 
-from dataset_manager import DatasetManager
-from configs import get_default_config
+try:
+    from dataset_manager import DatasetManager
+    from configs import get_default_config
+except ImportError:
+    # Handle relative import issues
+    sys.path.append(str(Path(__file__).parent))
+    from dataset_manager import DatasetManager
+    from configs import get_default_config
 
 
 def setup_logging(level: str = "INFO"):

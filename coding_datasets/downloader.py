@@ -82,7 +82,7 @@ class DatasetDownloader:
             except Exception as e:
                 self.logger.debug(f"Failed to authenticate with provided credentials: {e}")
 
-        # Method 2: Check environment variables
+        # Method 2: Check environment variables (this will automatically work if set)
         env_username = username or os.environ.get('KAGGLE_USERNAME')
         env_key = key or os.environ.get('KAGGLE_KEY')
 
@@ -91,7 +91,7 @@ class DatasetDownloader:
                 os.environ['KAGGLE_USERNAME'] = env_username
                 os.environ['KAGGLE_KEY'] = env_key
                 self.api.authenticate()
-                self.logger.info("Authenticated using environment variables")
+                self.logger.info(f"Authenticated using environment variables (user: {env_username})")
                 return True
             except Exception as e:
                 self.logger.debug(f"Failed to authenticate with environment variables: {e}")
@@ -136,6 +136,16 @@ class DatasetDownloader:
                 self.logger.debug(f"Failed to authenticate with KAGGLE_CONFIG_DIR: {e}")
 
         self.logger.error("All authentication methods failed")
+        self.logger.info("To set up Kaggle credentials, use one of these methods:")
+        self.logger.info("1. Environment variables:")
+        self.logger.info("   export KAGGLE_USERNAME='your_username'")
+        self.logger.info("   export KAGGLE_KEY='your_api_key'")
+        self.logger.info("2. Command line arguments:")
+        self.logger.info("   python main.py --kaggle-username your_username --kaggle-key your_api_key download dataset_name")
+        self.logger.info("3. Configuration file:")
+        self.logger.info("   Add kaggle_username and kaggle_key to your config.yaml")
+        self.logger.info("4. kaggle.json file:")
+        self.logger.info("   Place kaggle.json in ~/.kaggle/ directory")
         return False
 
     def download_dataset(self, dataset_id: str, force_redownload: bool = False) -> str:
