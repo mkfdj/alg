@@ -101,21 +101,119 @@ def cmd_download(manager, args):
 
     try:
         if args.all:
-            print("Downloading all datasets...")
-            datasets = list(manager.registry.list_datasets())
+            # Download only small datasets to avoid space issues
+            small_datasets = manager.registry.get_small_datasets(max_mb=100)
+            print(f"Downloading {len(small_datasets)} small datasets...")
+            datasets = small_datasets
         else:
             datasets = args.datasets
 
         for dataset_id in datasets:
             print(f"Downloading {dataset_id}...")
             try:
-                file_path = manager.download_dataset(dataset_id)
+                file_path = manager.download_dataset(dataset_id, check_space=True)
                 print(f"✓ Downloaded to: {file_path}")
             except Exception as e:
                 print(f"✗ Failed to download {dataset_id}: {str(e)}")
 
     except Exception as e:
         print(f"Error in download command: {str(e)}")
+
+def cmd_validate(manager, args):
+    """Validate datasets"""
+    try:
+        if not args.datasets and not args.all:
+            # Validate all downloaded datasets by default
+            datasets_to_validate = []
+            downloaded = manager.downloader.list_downloaded_datasets()
+            for dataset_id, info in downloaded.items():
+                if info['file_count'] > 0:
+                    datasets_to_validate.append(dataset_id)
+            print(f"Validating {len(datasets_to_validate)} downloaded datasets...")
+        else:
+            datasets_to_validate = args.datasets if args.datasets else list(manager.registry.list_datasets())
+
+        for dataset_id in datasets_to_validate:
+            try:
+                print(f"\nValidating {dataset_id}...")
+                results = manager.validate_dataset(dataset_id)
+                score = results['quality_score']
+                status = "✓ VALID" if results['is_valid'] else "✗ INVALID"
+
+                print(f"Status: {status} (Score: {score}/100)")
+
+                if results['errors']:
+                    print("Errors:")
+                    for error in results['errors']:
+                        print(f"  - {error}")
+
+                if results['warnings']:
+                    print("Warnings:")
+                    for warning in results['warnings']:
+                        print(f"  - {warning}")
+
+            except Exception as e:
+                print(f"Error: {str(e)}")
+
+    except Exception as e:
+        print(f"Error in validation command: {str(e)}")
+
+def cmd_process(manager, args):
+    """Process datasets and create training data"""
+    try:
+        # Get only downloaded datasets
+        downloaded_datasets = []
+        all_downloaded = manager.downloader.list_downloaded_datasets()
+        for dataset_id, info in all_downloaded.items():
+            if info['file_count'] > 0:
+                downloaded_datasets.append(dataset_id)
+
+        if not downloaded_datasets:
+            print("No downloaded datasets found. Please download datasets first.")
+            return
+
+        print(f"Creating training data from {len(downloaded_datasets)} downloaded datasets...")
+
+        # Simple training data creation without complex formatting
+        all_prompts = []
+        dataset_stats = {}
+
+        for dataset_id in downloaded_datasets:
+            try:
+                prompts = manager.extract_prompts(dataset_id)
+                if prompts:
+                    all_prompts.extend(prompts)
+                    dataset_stats[dataset_id] = len(prompts)
+                    print(f"  ✓ Added {len(prompts)} prompts from {dataset_id}")
+                else:
+                    print(f"  ⚠ No prompts found in {dataset_id}")
+            except Exception as e:
+                print(f"  ✗ Failed to process {dataset_id}: {str(e)}")
+
+        if all_prompts:
+            print(f"\n✓ Total prompts collected: {len(all_prompts)}")
+
+            # Simple export
+            if args.output:
+                import json
+                with open(args.output, 'w') as f:
+                    for i, prompt in enumerate(all_prompts):
+                        example = {
+                            'id': i,
+                            'prompt': prompt,
+                            'response': ''  # Empty response for now
+                        }
+                        f.write(json.dumps(example) + '\n')
+                print(f"✓ Exported to: {args.output}")
+            else:
+                print(f"\nSample prompts:")
+                for i, prompt in enumerate(all_prompts[:3]):
+                    print(f"\n{i+1}. {prompt[:200]}...")
+        else:
+            print("❌ No prompts found in any datasets")
+
+    except Exception as e:
+        print(f"Error in processing command: {str(e)}")
 
 def main():
     """Main entry point"""
@@ -136,6 +234,17 @@ def main():
     download_parser.add_argument("datasets", nargs="*", help="Dataset IDs to download")
     download_parser.add_argument("--all", action="store_true", help="Download all datasets")
     download_parser.set_defaults(func=cmd_download)
+
+    # Validate command
+    validate_parser = subparsers.add_parser("validate", help="Validate dataset quality")
+    validate_parser.add_argument("datasets", nargs="*", help="Dataset IDs to validate")
+    validate_parser.add_argument("--all", action="store_true", help="Validate all datasets")
+    validate_parser.set_defaults(func=lambda m, a: cmd_validate(m, a))
+
+    # Process command
+    process_parser = subparsers.add_parser("process", help="Process datasets into training data")
+    process_parser.add_argument("--output", default="training_data.jsonl", help="Output file path")
+    process_parser.set_defaults(func=lambda m, a: cmd_process(m, a))
 
     # Parse arguments
     args = parser.parse_args()

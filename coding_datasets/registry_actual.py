@@ -22,14 +22,14 @@ class DatasetInfo:
     prompt_field: str
 
 
-class DatasetRegistry:
+class ActualDatasetRegistry:
     """Registry for actual coding datasets with correct information"""
 
     def __init__(self):
         self.datasets = self._initialize_datasets()
 
     def _initialize_datasets(self) -> Dict[str, DatasetInfo]:
-        """Initialize all datasets with actual correct information"""
+        """Initialize all datasets with actual information"""
         return {
             "openai_humaneval_code_gen": DatasetInfo(
                 name="OpenAI HumanEval Code Gen",
@@ -127,62 +127,6 @@ class DatasetRegistry:
                 load_function="load_jsonl",
                 columns=["question_title", "question_content", "platform", "question_id", "contest_id", "contest_date", "starter_code", "difficulty", "public_test_cases", "private_test_cases", "metadata"],
                 prompt_field="question_content"
-            ),
-
-            "coding_questions_solutions": DatasetInfo(
-                name="Coding Questions with Solutions",
-                kaggle_link="https://www.kaggle.com/datasets/thedevastator/coding-questions-with-solutions",
-                description="Multi-level coding questions for interviews/competitions",
-                size="1.33 GB",
-                format="CSV",
-                structure_example="import pandas as pd\ndf = pd.read_csv('train.csv')\nprompts = df['question'].tolist()",
-                kaggle_dataset="thedevastator/coding-questions-with-solutions",
-                local_filename="train.csv",
-                load_function="load_csv",
-                columns=["question", "solutions", "input_output", "difficulty", "url", "starter_code"],
-                prompt_field="question"
-            ),
-
-            "evol_instruct_code": DatasetInfo(
-                name="Evol-Instruct-Code-80k-v1",
-                kaggle_link="https://www.kaggle.com/datasets/thedevastator/evol-instruct-code-80k-v1-dataset",
-                description="80K evolved code instructions for advanced gen",
-                size="116.59 MB",
-                format="CSV",
-                structure_example="import pandas as pd\ndf = pd.read_csv('train.csv')\nprompts = df['instruction'].tolist()",
-                kaggle_dataset="thedevastator/evol-instruct-code-80k-v1-dataset",
-                local_filename="train.csv",
-                load_function="load_csv",
-                columns=["output", "instruction"],
-                prompt_field="instruction"
-            ),
-
-            "python_programming_questions": DatasetInfo(
-                name="Python Programming Questions Dataset",
-                kaggle_link="https://www.kaggle.com/datasets/bhaveshmittal/python-programming-questions-dataset",
-                description="150+ Python questions for ML training",
-                size="3.9 MB",
-                format="CSV",
-                structure_example="import pandas as pd\ndf = pd.read_csv('Python Programming Questions Dataset.csv')\nprompts = df['Instruction'].tolist()",
-                kaggle_dataset="bhaveshmittal/python-programming-questions-dataset",
-                local_filename="Python Programming Questions Dataset.csv",
-                load_function="load_csv",
-                columns=["Instruction", "Input", "Output"],
-                prompt_field="Instruction"
-            ),
-
-            "python_code_advanced": DatasetInfo(
-                name="Python Code Instruction (Advanced)",
-                kaggle_link="https://www.kaggle.com/datasets/thedevastator/python-code-instruction-dataset",
-                description="Advanced instructions with web react/design patterns",
-                size="25.22 MB",
-                format="CSV",
-                structure_example="import pandas as pd\ndf = pd.read_csv('train.csv')\nprompts = df['prompt'].tolist()",
-                kaggle_dataset="thedevastator/python-code-instruction-dataset",
-                local_filename="train.csv",
-                load_function="load_csv",
-                columns=["instruction", "input", "output", "prompt"],
-                prompt_field="prompt"
             )
         }
 
@@ -248,47 +192,3 @@ class DatasetRegistry:
             "total_size_gb": round(total_size_mb / 1024, 2),
             "format_distribution": format_counts
         }
-
-    def get_small_datasets(self, max_mb: float = 100) -> List[str]:
-        """Get datasets that are smaller than max_mb"""
-        small_datasets = []
-        for dataset_id, info in self.datasets.items():
-            size_str = info.size
-            try:
-                if "kB" in size_str:
-                    size_mb = float(size_str.replace(" kB", "")) / 1024
-                elif "MB" in size_str:
-                    size_mb = float(size_str.replace(" MB", ""))
-                elif "GB" in size_str:
-                    size_mb = float(size_str.replace(" GB", "")) * 1024
-                else:
-                    continue
-
-                if size_mb <= max_mb:
-                    small_datasets.append(dataset_id)
-            except:
-                continue
-
-        return small_datasets
-
-    def get_large_datasets(self, min_mb: float = 500) -> List[str]:
-        """Get datasets that are larger than min_mb"""
-        large_datasets = []
-        for dataset_id, info in self.datasets.items():
-            size_str = info.size
-            try:
-                if "kB" in size_str:
-                    size_mb = float(size_str.replace(" kB", "")) / 1024
-                elif "MB" in size_str:
-                    size_mb = float(size_str.replace(" MB", ""))
-                elif "GB" in size_str:
-                    size_mb = float(size_str.replace(" GB", "")) * 1024
-                else:
-                    continue
-
-                if size_mb > min_mb:
-                    large_datasets.append(dataset_id)
-            except:
-                continue
-
-        return large_datasets
