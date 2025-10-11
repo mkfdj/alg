@@ -148,13 +148,15 @@ class DatasetDownloader:
         self.logger.info("   Place kaggle.json in ~/.kaggle/ directory")
         return False
 
-    def download_dataset(self, dataset_id: str, force_redownload: bool = False) -> str:
+    def download_dataset(self, dataset_id: str, force_redownload: bool = False,
+                         check_space: bool = True) -> str:
         """
         Download a specific dataset
 
         Args:
             dataset_id: Dataset ID from registry
             force_redownload: Force re-download even if file exists
+            check_space: Check available disk space before downloading
 
         Returns:
             Path to downloaded dataset
@@ -164,6 +166,11 @@ class DatasetDownloader:
 
         # Get dataset info
         dataset_info = self.registry.get_dataset_info(dataset_id)
+
+        # Check if dataset is too large (skip datasets > 500MB)
+        if check_space and self._is_large_dataset(dataset_info):
+            self.logger.warning(f"Skipping large dataset {dataset_info.name} ({dataset_info.size})")
+            raise RuntimeError(f"Dataset too large: {dataset_info.name} ({dataset_info.size})")
 
         # Create dataset-specific directory
         dataset_dir = self.download_path / dataset_id
@@ -202,6 +209,25 @@ class DatasetDownloader:
         except Exception as e:
             self.logger.error(f"Error downloading dataset {dataset_id}: {str(e)}")
             raise
+
+    def _is_large_dataset(self, dataset_info) -> bool:
+        """Check if dataset is too large to download"""
+        # Extract size in MB from size string
+        size_str = dataset_info.size
+        try:
+            if "MB" in size_str:
+                size_mb = float(size_str.replace(" MB", ""))
+            elif "GB" in size_str:
+                size_mb = float(size_str.replace(" GB", "")) * 1024
+            elif "KB" in size_str:
+                size_mb = float(size_str.replace(" KB", "")) / 1024
+            else:
+                return False
+
+            # Skip datasets larger than 500MB
+            return size_mb > 500
+        except:
+            return False
 
     def download_all_datasets(self, force_redownload: bool = False) -> Dict[str, str]:
         """
@@ -259,9 +285,24 @@ class DatasetDownloader:
 
         extensions = format_extensions.get(format_type, ['.csv', '.json', '.jsonl', '.parquet'])
 
+        # Look for files recursively
+        all_files = []
         for file_path in dataset_dir.rglob("*"):
             if file_path.is_file() and file_path.suffix.lower() in extensions:
-                return file_path
+                all_files.append(file_path)
+
+        if all_files:
+            # Return the largest file (most likely the main dataset)
+            return max(all_files, key=lambda f: f.stat().st_size)
+
+        # If no matching files, try to find any data file
+        all_data_files = []
+        for file_path in dataset_dir.rglob("*"):
+            if file_path.is_file() and file_path.stat().st_size > 1000:  # At least 1KB
+                all_data_files.append(file_path)
+
+        if all_data_files:
+            return max(all_data_files, key=lambda f: f.stat().st_size)
 
         return None
 
